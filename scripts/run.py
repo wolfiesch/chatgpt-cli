@@ -45,16 +45,25 @@ def ensure_venv():
     return get_venv_python()
 
 
+__version__ = "0.1.0"
+
+
 def main():
     """Main runner"""
-    if len(sys.argv) < 2:
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print(f"chatgpt-cli runner v{__version__}")
         print("Usage: python run.py <script_name> [args...]")
         print("\nAvailable scripts:")
         print("  chatgpt.py     - Send prompt, list chats, or retrieve conversations")
         print(
             "  dom_debug.py   - DOM diagnostic tool (inspect selectors, test input/response)"
         )
-        sys.exit(1)
+        print("\nUse 'python run.py chatgpt.py --help' for full CLI options.")
+        sys.exit(0 if len(sys.argv) >= 2 else 1)
+
+    if sys.argv[1] in ("-V", "--version"):
+        print(f"chatgpt-cli {__version__}")
+        sys.exit(0)
 
     script_name = sys.argv[1]
     script_args = sys.argv[2:]

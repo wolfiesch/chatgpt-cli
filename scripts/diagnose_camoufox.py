@@ -57,52 +57,10 @@ async def main():
         injected = await engine.inject_cookies(cookies)
         print(f"\nCookies injected: {injected}/{len(cookies)}")
 
-        # Workaround: use route intercept to fetch+decompress Brotli responses
-        # This is a known Camoufox bug: https://github.com/daijro/camoufox/discussions/332
-        print("\n=== Setting up Brotli decompression route ===")
-
-        def _setup_route():
-            import brotli
-
-            def handle_route(route):
-                try:
-                    response = route.fetch()
-                    headers = response.headers
-                    body = response.body()
-                    encoding = headers.get("content-encoding", "")
-
-                    if encoding == "br" and body:
-                        try:
-                            body = brotli.decompress(body)
-                            # Remove content-encoding since we've decompressed
-                            headers = {
-                                k: v
-                                for k, v in headers.items()
-                                if k.lower() != "content-encoding"
-                            }
-                        except Exception:
-                            pass  # Not actually brotli, pass through
-
-                    route.fulfill(
-                        status=response.status,
-                        headers=headers,
-                        body=body,
-                    )
-                except Exception:
-                    # Fallback: just continue normally
-                    try:
-                        route.continue_()
-                    except Exception:
-                        pass
-
-            engine._page.route("**/*", handle_route)
-
-        await engine._run(_setup_route)
-
+        # Brotli decompression is now handled automatically by the engine's
+        # _setup_brotli_workaround() — no manual route setup needed.
         await engine.goto(CHATGPT_URL)
-        print(
-            "Navigated to ChatGPT (with Brotli decompress proxy), waiting 8s for load..."
-        )
+        print("Navigated to ChatGPT, waiting 8s for load...")
         await engine.sleep(8)
 
         # Check for Cloudflare challenge

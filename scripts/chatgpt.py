@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+__version__ = "0.1.0"
+
 sys.path.insert(0, str(Path.home() / ".claude/skills/shared"))
 from browser_engine import create_engine, add_engine_argument, BrowserEngine
 
@@ -2118,6 +2120,7 @@ async def delete_or_archive_chat(
 
 def main():
     parser = argparse.ArgumentParser(
+        prog="chatgpt-cli",
         description="Send prompts to ChatGPT via CLI, or browse chat history",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
@@ -2175,6 +2178,9 @@ Output:
   By default, prints only the response text.
   Use --json for full JSON output with metadata.
 """,
+    )
+    parser.add_argument(
+        "--version", "-V", action="version", version=f"%(prog)s {__version__}"
     )
 
     # Prompt (can be used standalone or with --continue-chat)

@@ -13,8 +13,13 @@ CLI tool that queries ChatGPT using Chrome authentication cookies and stealth br
 # Run any command (auto-manages venv)
 python3 scripts/run.py chatgpt.py --prompt "Hello" --show-browser
 
-# Lint
+# Help & version
+python3 scripts/run.py chatgpt.py --help
+python3 scripts/run.py chatgpt.py --version
+
+# Lint & format
 ruff check scripts/
+ruff format --check scripts/
 
 # Install deps manually (usually auto-handled by run.py)
 python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
