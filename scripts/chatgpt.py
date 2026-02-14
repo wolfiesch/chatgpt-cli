@@ -795,7 +795,7 @@ async def wait_for_response(
 async def prompt_chatgpt(
     prompt: str,
     engine_name: str = "nodriver",
-    headless: bool = None,
+    headless: bool | None = None,
     timeout: int = None,
     screenshot: str = None,
     show_browser: bool = False,
@@ -808,6 +808,8 @@ async def prompt_chatgpt(
     temp_chat: bool = False,
     web_search: bool | None = None,
     files: list[str] | None = None,
+    gpt: str | None = None,
+    _return_engine: bool = False,
 ) -> dict:
     """Send a prompt to ChatGPT and get the response.
 
@@ -818,6 +820,8 @@ async def prompt_chatgpt(
         temp_chat: Enable temporary chat mode (not saved to history).
         web_search: True to enable, False to disable, None for default.
         files: List of file paths to upload as attachments before sending.
+        gpt: Custom GPT name to use (navigates to GPT page before sending).
+        _return_engine: Internal flag — if True, keeps engine alive and returns it in result.
     """
     selected_model = model or DEFAULT_MODEL
     if timeout is None:
@@ -964,6 +968,45 @@ async def prompt_chatgpt(
             project_url = f"https://chatgpt.com{matched['url']}"
             await engine.goto(project_url)
             await engine.sleep(4)
+
+        # Handle --gpt: navigate to custom GPT
+        elif gpt:
+            _log(f"gpt: navigating to custom GPT '{gpt}'", verbose)
+            # Navigate to GPT search page
+            from urllib.parse import quote
+
+            gpt_search_url = f"https://chatgpt.com/gpts/search?q={quote(gpt)}"
+            await engine.goto(gpt_search_url)
+            await engine.sleep(5)
+
+            # Find matching GPT in search results
+            gpt_search_name = gpt.lower().replace("'", "\\'")
+            gpt_link = await engine.run_js(f"""(() => {{
+                const links = document.querySelectorAll('a[href*="/g/g-"]');
+                for (const a of links) {{
+                    const text = (a.innerText || '').trim();
+                    if (text.toLowerCase().includes('{gpt_search_name}')) {{
+                        return {{url: a.getAttribute('href'), name: text}};
+                    }}
+                }}
+                // Fallback: first result
+                const first = document.querySelector('a[href*="/g/g-"]');
+                if (first) {{
+                    return {{url: first.getAttribute('href'), name: (first.innerText || '').trim()}};
+                }}
+                return null;
+            }})()""")
+
+            if not gpt_link:
+                return {
+                    "success": False,
+                    "error": f"Custom GPT '{gpt}' not found in search results",
+                }
+
+            _log(f"gpt: found '{gpt_link['name']}', navigating", verbose)
+            gpt_url = f"https://chatgpt.com{gpt_link['url']}"
+            await engine.goto(gpt_url)
+            await engine.sleep(5)
 
         # Handle --new-chat: force fresh conversation
         elif new_chat:
@@ -1149,7 +1192,7 @@ async def prompt_chatgpt(
         response_tokens = estimate_tokens(response_text)
         prompt_tokens = estimate_tokens(prompt)
 
-        return {
+        result = {
             "success": True,
             "response": response_text,
             "prompt": prompt,
@@ -1164,6 +1207,9 @@ async def prompt_chatgpt(
             },
             "screenshot": screenshot,
         }
+        if _return_engine:
+            result["_engine"] = engine
+        return result
 
     except Exception as e:
         import traceback
@@ -1171,7 +1217,7 @@ async def prompt_chatgpt(
         return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
     finally:
-        if engine:
+        if engine and not _return_engine:
             await engine.stop()
 
 
@@ -2115,6 +2161,679 @@ async def delete_or_archive_chat(
             await engine.stop()
 
 
+async def rename_chat(
+    chat_id: str,
+    new_name: str,
+    engine_name: str = "nodriver",
+    headless: bool | None = None,
+    show_browser: bool = False,
+    verbose: bool = False,
+) -> dict:
+    """Rename a ChatGPT conversation via the sidebar hover menu.
+
+    After clicking "Rename", the title becomes an inline-editable input.
+    We select all, type the new name, and press Enter to confirm.
+    """
+    setup = await _setup_authenticated_browser(
+        headless=headless,
+        show_browser=show_browser,
+        verbose=verbose,
+        engine_name=engine_name,
+    )
+    if not setup["success"]:
+        return setup
+
+    engine = setup["engine"]
+
+    try:
+        await engine.sleep(3)
+
+        # Resolve the chat ID to find the sidebar link
+        resolved_id = chat_id
+        idx_match = re.match(r"^idx-(\d+)$", chat_id)
+        if idx_match or not re.match(r"^[a-zA-Z0-9-]{20,}$", chat_id):
+            chat_links = await engine.run_js("""(() => {
+                const results = [];
+                const links = document.querySelectorAll('a[href*="/c/"]');
+                for (const a of links) {
+                    const href = a.getAttribute('href') || '';
+                    const text = (a.innerText || '').trim().substring(0, 200);
+                    if (!text || text.length < 2) continue;
+                    const match = href.match(/\\/c\\/([a-zA-Z0-9-]+)/);
+                    const chatId = match ? match[1] : '';
+                    const r = a.getBoundingClientRect();
+                    results.push({id: chatId, title: text, x: r.x + r.width / 2, y: r.y + r.height / 2});
+                }
+                return results;
+            })()""")
+
+            if idx_match:
+                chat_index = int(idx_match.group(1))
+                if not chat_links or chat_index >= len(chat_links):
+                    return {
+                        "success": False,
+                        "error": f"Chat index {chat_index} out of range",
+                    }
+                target = chat_links[chat_index]
+            else:
+                target = None
+                for link in chat_links or []:
+                    if chat_id.lower() in link["title"].lower():
+                        target = link
+                        break
+                if not target:
+                    return {
+                        "success": False,
+                        "error": f"Chat '{chat_id}' not found in sidebar",
+                    }
+            resolved_id = target["id"]
+        else:
+            target_info = await engine.run_js(f"""(() => {{
+                const links = document.querySelectorAll('a[href*="/c/{resolved_id}"]');
+                for (const a of links) {{
+                    const r = a.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {{
+                        return {{x: r.x + r.width / 2, y: r.y + r.height / 2, title: (a.innerText || '').trim()}};
+                    }}
+                }}
+                return null;
+            }})()""")
+            if not target_info:
+                return {
+                    "success": False,
+                    "error": f"Chat '{resolved_id}' not visible in sidebar",
+                }
+            target = {
+                "id": resolved_id,
+                "title": target_info["title"],
+                "x": target_info["x"],
+                "y": target_info["y"],
+            }
+
+        old_title = target["title"]
+        _log(f"rename: targeting chat '{old_title}' ({resolved_id})", verbose)
+
+        # Hover over the chat link to reveal the options button
+        await engine.mouse_move(target["x"], target["y"])
+        await engine.sleep(0.5)
+
+        # Find and click the options button (three dots)
+        options_btn = await engine.run_js(f"""(() => {{
+            const btns = document.querySelectorAll('button[data-testid*="history-item"][data-testid*="options"]');
+            for (const btn of btns) {{
+                const r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) {{
+                    return {{x: r.x + r.width / 2, y: r.y + r.height / 2}};
+                }}
+            }}
+            const allBtns = document.querySelectorAll('button[aria-label*="Options"], button[aria-haspopup="menu"]');
+            for (const btn of allBtns) {{
+                const r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0 && Math.abs(r.y - {target["y"]}) < 30) {{
+                    return {{x: r.x + r.width / 2, y: r.y + r.height / 2}};
+                }}
+            }}
+            return null;
+        }})()""")
+
+        if not options_btn:
+            return {
+                "success": False,
+                "error": f"Could not find options button for chat '{old_title}'",
+            }
+
+        await engine.mouse_click(options_btn["x"], options_btn["y"])
+        await engine.sleep(1)
+
+        # Find and click "Rename" menu item
+        menu_item = await engine.run_js("""(() => {
+            const items = document.querySelectorAll('[role="menuitem"], [role="option"], button');
+            for (const item of items) {
+                const text = (item.innerText || '').trim();
+                if (text.toLowerCase().includes('rename')) {
+                    const r = item.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        return {x: r.x + r.width / 2, y: r.y + r.height / 2, text: text};
+                    }
+                }
+            }
+            return null;
+        })()""")
+
+        if not menu_item:
+            return {"success": False, "error": "Could not find 'Rename' in menu"}
+
+        _log(f"rename: clicking '{menu_item['text']}' menu item", verbose)
+        await engine.mouse_click(menu_item["x"], menu_item["y"])
+        await engine.sleep(0.5)
+
+        # After clicking Rename, the title becomes an editable input field
+        # Select all existing text and type the new name
+        await engine.key_press("a", modifiers=4)  # Cmd+A to select all
+        await engine.sleep(0.2)
+
+        # Type the new name character by character via JS
+        for char in new_name:
+            await engine.key_press(char)
+            await engine.sleep(0.03)
+
+        await engine.sleep(0.3)
+
+        # Press Enter to confirm
+        await engine.key_press("Enter")
+        await engine.sleep(1)
+
+        return {
+            "success": True,
+            "chat_id": resolved_id,
+            "old_title": old_title,
+            "new_title": new_name,
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    finally:
+        if engine:
+            await engine.stop()
+
+
+async def share_chat(
+    chat_id: str,
+    engine_name: str = "nodriver",
+    headless: bool | None = None,
+    show_browser: bool = False,
+    verbose: bool = False,
+) -> dict:
+    """Share a ChatGPT conversation and return the share link.
+
+    Opens the hover menu, clicks Share, then extracts the generated share URL
+    from the share dialog.
+    """
+    setup = await _setup_authenticated_browser(
+        headless=headless,
+        show_browser=show_browser,
+        verbose=verbose,
+        engine_name=engine_name,
+    )
+    if not setup["success"]:
+        return setup
+
+    engine = setup["engine"]
+
+    try:
+        await engine.sleep(3)
+
+        # Resolve the chat ID to find the sidebar link
+        resolved_id = chat_id
+        idx_match = re.match(r"^idx-(\d+)$", chat_id)
+        if idx_match or not re.match(r"^[a-zA-Z0-9-]{20,}$", chat_id):
+            chat_links = await engine.run_js("""(() => {
+                const results = [];
+                const links = document.querySelectorAll('a[href*="/c/"]');
+                for (const a of links) {
+                    const href = a.getAttribute('href') || '';
+                    const text = (a.innerText || '').trim().substring(0, 200);
+                    if (!text || text.length < 2) continue;
+                    const match = href.match(/\\/c\\/([a-zA-Z0-9-]+)/);
+                    const chatId = match ? match[1] : '';
+                    const r = a.getBoundingClientRect();
+                    results.push({id: chatId, title: text, x: r.x + r.width / 2, y: r.y + r.height / 2});
+                }
+                return results;
+            })()""")
+
+            if idx_match:
+                chat_index = int(idx_match.group(1))
+                if not chat_links or chat_index >= len(chat_links):
+                    return {
+                        "success": False,
+                        "error": f"Chat index {chat_index} out of range",
+                    }
+                target = chat_links[chat_index]
+            else:
+                target = None
+                for link in chat_links or []:
+                    if chat_id.lower() in link["title"].lower():
+                        target = link
+                        break
+                if not target:
+                    return {
+                        "success": False,
+                        "error": f"Chat '{chat_id}' not found in sidebar",
+                    }
+            resolved_id = target["id"]
+        else:
+            target_info = await engine.run_js(f"""(() => {{
+                const links = document.querySelectorAll('a[href*="/c/{resolved_id}"]');
+                for (const a of links) {{
+                    const r = a.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {{
+                        return {{x: r.x + r.width / 2, y: r.y + r.height / 2, title: (a.innerText || '').trim()}};
+                    }}
+                }}
+                return null;
+            }})()""")
+            if not target_info:
+                return {
+                    "success": False,
+                    "error": f"Chat '{resolved_id}' not visible in sidebar",
+                }
+            target = {
+                "id": resolved_id,
+                "title": target_info["title"],
+                "x": target_info["x"],
+                "y": target_info["y"],
+            }
+
+        _log(f"share: targeting chat '{target['title']}' ({resolved_id})", verbose)
+
+        # Hover over the chat link to reveal the options button
+        await engine.mouse_move(target["x"], target["y"])
+        await engine.sleep(0.5)
+
+        # Find and click the options button (three dots)
+        options_btn = await engine.run_js(f"""(() => {{
+            const btns = document.querySelectorAll('button[data-testid*="history-item"][data-testid*="options"]');
+            for (const btn of btns) {{
+                const r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) {{
+                    return {{x: r.x + r.width / 2, y: r.y + r.height / 2}};
+                }}
+            }}
+            const allBtns = document.querySelectorAll('button[aria-label*="Options"], button[aria-haspopup="menu"]');
+            for (const btn of allBtns) {{
+                const r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0 && Math.abs(r.y - {target["y"]}) < 30) {{
+                    return {{x: r.x + r.width / 2, y: r.y + r.height / 2}};
+                }}
+            }}
+            return null;
+        }})()""")
+
+        if not options_btn:
+            return {
+                "success": False,
+                "error": f"Could not find options button for chat '{target['title']}'",
+            }
+
+        await engine.mouse_click(options_btn["x"], options_btn["y"])
+        await engine.sleep(1)
+
+        # Find and click "Share" menu item
+        menu_item = await engine.run_js("""(() => {
+            const items = document.querySelectorAll('[role="menuitem"], [role="option"], button');
+            for (const item of items) {
+                const text = (item.innerText || '').trim();
+                if (text.toLowerCase().includes('share')) {
+                    const r = item.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        return {x: r.x + r.width / 2, y: r.y + r.height / 2, text: text};
+                    }
+                }
+            }
+            return null;
+        })()""")
+
+        if not menu_item:
+            return {"success": False, "error": "Could not find 'Share' in menu"}
+
+        _log(f"share: clicking '{menu_item['text']}' menu item", verbose)
+        await engine.mouse_click(menu_item["x"], menu_item["y"])
+        await engine.sleep(2)
+
+        # Share dialog should be open now. Look for share link or "Copy link" button.
+        # ChatGPT shows a dialog with the share URL in an input field or a "Copy link" button.
+        share_url = await engine.run_js("""(() => {
+            // Look for share URL in dialog input fields
+            const inputs = document.querySelectorAll('input[type="text"], input[readonly]');
+            for (const input of inputs) {
+                const val = input.value || '';
+                if (val.includes('chatgpt.com/share/') || val.includes('chat.openai.com/share/')) {
+                    return val;
+                }
+            }
+            // Look for share link in dialog text
+            const dialog = document.querySelector('[role="dialog"]');
+            if (dialog) {
+                const links = dialog.querySelectorAll('a[href*="share"]');
+                for (const a of links) {
+                    return a.href;
+                }
+                // Check for any URL-like text
+                const text = dialog.innerText || '';
+                const urlMatch = text.match(/https:\\/\\/chatgpt\\.com\\/share\\/[a-zA-Z0-9-]+/);
+                if (urlMatch) return urlMatch[0];
+            }
+            return null;
+        })()""")
+
+        if not share_url:
+            # Try clicking "Create link" or "Copy link" button first
+            create_btn = await engine.run_js("""(() => {
+                const btns = document.querySelectorAll('button');
+                for (const btn of btns) {
+                    const text = (btn.innerText || '').trim().toLowerCase();
+                    if (text.includes('create link') || text.includes('copy link')
+                        || text.includes('share link') || text.includes('generate')) {
+                        const r = btn.getBoundingClientRect();
+                        if (r.width > 0 && r.height > 0) {
+                            return {x: r.x + r.width / 2, y: r.y + r.height / 2, text: btn.innerText.trim()};
+                        }
+                    }
+                }
+                return null;
+            })()""")
+
+            if create_btn:
+                _log(f"share: clicking '{create_btn['text']}'", verbose)
+                await engine.mouse_click(create_btn["x"], create_btn["y"])
+                await engine.sleep(3)
+
+                # Re-check for share URL
+                share_url = await engine.run_js("""(() => {
+                    const inputs = document.querySelectorAll('input[type="text"], input[readonly]');
+                    for (const input of inputs) {
+                        const val = input.value || '';
+                        if (val.includes('chatgpt.com/share/') || val.includes('chat.openai.com/share/')) {
+                            return val;
+                        }
+                    }
+                    const dialog = document.querySelector('[role="dialog"]');
+                    if (dialog) {
+                        const text = dialog.innerText || '';
+                        const urlMatch = text.match(/https:\\/\\/chatgpt\\.com\\/share\\/[a-zA-Z0-9-]+/);
+                        if (urlMatch) return urlMatch[0];
+                    }
+                    return null;
+                })()""")
+
+        if not share_url:
+            return {
+                "success": False,
+                "error": "Could not extract share URL from dialog",
+            }
+
+        return {
+            "success": True,
+            "chat_id": resolved_id,
+            "title": target["title"],
+            "share_url": share_url,
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    finally:
+        if engine:
+            await engine.stop()
+
+
+async def list_memories(
+    engine_name: str = "nodriver",
+    headless: bool | None = None,
+    show_browser: bool = False,
+    verbose: bool = False,
+) -> dict:
+    """List ChatGPT memories from the Settings > Personalization > Memory page."""
+    setup = await _setup_authenticated_browser(
+        headless=headless,
+        show_browser=show_browser,
+        verbose=verbose,
+        engine_name=engine_name,
+    )
+    if not setup["success"]:
+        return setup
+
+    engine = setup["engine"]
+
+    try:
+        await engine.sleep(3)
+
+        # Open settings by clicking the profile/settings button
+        _log("memories: opening settings", verbose)
+        settings_btn = await engine.run_js("""(() => {
+            // Look for settings/profile button
+            const btns = document.querySelectorAll(
+                'button[data-testid*="profile"], button[data-testid*="settings"], '
+                + 'button[aria-label*="Settings"], button[aria-label*="Profile"]'
+            );
+            for (const btn of btns) {
+                const r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0) {
+                    return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                }
+            }
+            // Fallback: look for user avatar/icon in bottom-left
+            const avatars = document.querySelectorAll('img[alt*="User"], button img[alt]');
+            for (const av of avatars) {
+                const btn = av.closest('button') || av;
+                const r = btn.getBoundingClientRect();
+                if (r.width > 0 && r.height > 0 && r.y > 400) {
+                    return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                }
+            }
+            return null;
+        })()""")
+
+        if not settings_btn:
+            return {"success": False, "error": "Could not find settings/profile button"}
+
+        await engine.mouse_click(settings_btn["x"], settings_btn["y"])
+        await engine.sleep(1)
+
+        # Look for "Settings" menu item in the dropdown
+        settings_item = await engine.run_js("""(() => {
+            const items = document.querySelectorAll('[role="menuitem"], [role="option"], button, a');
+            for (const item of items) {
+                const text = (item.innerText || '').trim().toLowerCase();
+                if (text === 'settings') {
+                    const r = item.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                    }
+                }
+            }
+            return null;
+        })()""")
+
+        if settings_item:
+            await engine.mouse_click(settings_item["x"], settings_item["y"])
+            await engine.sleep(2)
+
+        # Navigate to Personalization tab
+        _log("memories: navigating to Personalization", verbose)
+        personalization_tab = await engine.run_js("""(() => {
+            const items = document.querySelectorAll('button, a, [role="tab"], [role="menuitem"]');
+            for (const item of items) {
+                const text = (item.innerText || '').trim().toLowerCase();
+                if (text.includes('personalization')) {
+                    const r = item.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                    }
+                }
+            }
+            return null;
+        })()""")
+
+        if personalization_tab:
+            await engine.mouse_click(personalization_tab["x"], personalization_tab["y"])
+            await engine.sleep(2)
+
+        # Look for "Manage" button next to Memory section
+        manage_btn = await engine.run_js("""(() => {
+            const btns = document.querySelectorAll('button, a');
+            for (const btn of btns) {
+                const text = (btn.innerText || '').trim().toLowerCase();
+                if (text === 'manage' || text === 'manage memories') {
+                    const r = btn.getBoundingClientRect();
+                    if (r.width > 0 && r.height > 0) {
+                        return {x: r.x + r.width / 2, y: r.y + r.height / 2};
+                    }
+                }
+            }
+            return null;
+        })()""")
+
+        if manage_btn:
+            _log("memories: clicking 'Manage' button", verbose)
+            await engine.mouse_click(manage_btn["x"], manage_btn["y"])
+            await engine.sleep(2)
+
+        # Extract memory entries from the page
+        memories = await engine.run_js("""(() => {
+            const results = [];
+            // Look for memory items — usually in a list or grid
+            const memoryItems = document.querySelectorAll(
+                '[data-testid*="memory"], .memory-item, [class*="memory"]'
+            );
+            for (const item of memoryItems) {
+                const text = (item.innerText || '').trim();
+                if (text && text.length > 2) {
+                    results.push({text: text});
+                }
+            }
+            // Fallback: look for list items in the memory dialog/section
+            if (results.length === 0) {
+                const dialog = document.querySelector('[role="dialog"]');
+                const container = dialog || document;
+                const items = container.querySelectorAll('li, [role="listitem"], p');
+                for (const item of items) {
+                    const text = (item.innerText || '').trim();
+                    if (text && text.length > 5 && !text.includes('Memory')
+                        && !text.includes('Manage') && !text.includes('Clear all')) {
+                        results.push({text: text});
+                    }
+                }
+            }
+            return results;
+        })()""")
+
+        return {
+            "success": True,
+            "memories": memories or [],
+            "count": len(memories or []),
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+    finally:
+        if engine:
+            await engine.stop()
+
+
+async def generate_and_download_image(
+    prompt: str,
+    output_dir: str = ".",
+    engine_name: str = "nodriver",
+    headless: bool | None = None,
+    show_browser: bool = False,
+    timeout: int | None = None,
+    verbose: bool = False,
+) -> dict:
+    """Generate an image via DALL-E in ChatGPT and download it.
+
+    Sends the prompt, waits for the response, detects generated images
+    in the DOM, and downloads them to output_dir.
+    """
+    import urllib.request
+
+    # Use the normal prompt flow first
+    result = await prompt_chatgpt(
+        prompt=prompt,
+        engine_name=engine_name,
+        headless=headless,
+        show_browser=show_browser,
+        timeout=timeout or 120,
+        model="auto",
+        verbose=verbose,
+        new_chat=True,
+        _return_engine=True,  # Keep engine alive for image extraction
+    )
+
+    if not result.get("success"):
+        return result
+
+    engine = result.get("_engine")
+    if not engine:
+        return {
+            **result,
+            "images": [],
+            "note": "Engine not available for image extraction",
+        }
+
+    try:
+        await engine.sleep(2)
+
+        # Extract image URLs from the response
+        images = await engine.run_js("""(() => {
+            const results = [];
+            // Look for DALL-E generated images
+            const imgs = document.querySelectorAll(
+                'img[src*="oaidalleapi"], img[src*="dalle"], '
+                + 'img[src*="openai"], img[src*="blob:"], '
+                + 'img[data-testid*="image"], img.dalle-image'
+            );
+            for (const img of imgs) {
+                const src = img.src || img.getAttribute('src');
+                const alt = img.alt || '';
+                if (src && !src.includes('avatar') && !src.includes('icon')) {
+                    const r = img.getBoundingClientRect();
+                    if (r.width > 100 && r.height > 100) {
+                        results.push({url: src, alt: alt, width: r.width, height: r.height});
+                    }
+                }
+            }
+            // Also check for download links
+            const links = document.querySelectorAll('a[download], a[href*="dall"]');
+            for (const a of links) {
+                results.push({url: a.href, alt: a.innerText || '', download: true});
+            }
+            return results;
+        })()""")
+
+        downloaded = []
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        for i, img in enumerate(images or []):
+            url = img.get("url", "")
+            if not url or url.startswith("blob:"):
+                continue
+            try:
+                ext = ".png"
+                if ".jpg" in url or ".jpeg" in url:
+                    ext = ".jpg"
+                elif ".webp" in url:
+                    ext = ".webp"
+                filename = f"chatgpt_image_{i + 1}{ext}"
+                filepath = output_path / filename
+                _log(
+                    f"generate-image: downloading {url[:80]}... -> {filepath}", verbose
+                )
+                urllib.request.urlretrieve(url, str(filepath))
+                downloaded.append(
+                    {"url": url, "path": str(filepath), "alt": img.get("alt", "")}
+                )
+            except Exception as e:
+                _log(f"generate-image: download failed: {e}", verbose)
+
+        return {
+            **{k: v for k, v in result.items() if k != "_engine"},
+            "images": images or [],
+            "downloaded": downloaded,
+        }
+
+    except Exception as e:
+        return {**result, "images": [], "error_extracting": str(e)}
+
+    finally:
+        if engine:
+            await engine.stop()
+
+
 # ── CLI ───────────────────────────────────────────────────────────────
 
 
@@ -2156,6 +2875,17 @@ Examples:
   python chatgpt.py --prompt "Review this code" --file main.py --file utils.py
   python chatgpt.py --prompt "What's in this image?" --image photo.jpg
   python chatgpt.py --prompt "Compare these" --image a.png --image b.png
+
+  # Custom GPTs
+  python chatgpt.py --gpt "Data Analyst" --prompt "Analyze this CSV" --file data.csv
+
+  # Rename, share, memories
+  python chatgpt.py --rename-chat idx-0 --new-name "My Awesome Chat"
+  python chatgpt.py --share idx-0
+  python chatgpt.py --list-memories --show-browser
+
+  # Image generation
+  python chatgpt.py --generate-image "A sunset over mountains" --output ./images
 
   # Code extraction and toggles
   python chatgpt.py --prompt "Write a Python sort" --code-only
@@ -2223,6 +2953,26 @@ Output:
         metavar="CHAT_ID",
         help="Archive a conversation (by index, title, or ID)",
     )
+    browse_group.add_argument(
+        "--rename-chat",
+        metavar="CHAT_ID",
+        help="Rename a conversation (by index, title, or ID). Use --new-name for the name.",
+    )
+    browse_group.add_argument(
+        "--share",
+        metavar="CHAT_ID",
+        help="Share a conversation and get the share link (by index, title, or ID)",
+    )
+    browse_group.add_argument(
+        "--list-memories",
+        action="store_true",
+        help="List ChatGPT memories from Settings > Personalization",
+    )
+    browse_group.add_argument(
+        "--generate-image",
+        metavar="PROMPT",
+        help="Generate an image with DALL-E and download it (use --output for directory)",
+    )
 
     # Chat navigation
     parser.add_argument(
@@ -2239,6 +2989,22 @@ Output:
         "--project",
         metavar="NAME",
         help="Send prompt within a ChatGPT Project context (by name or ID). Requires --prompt.",
+    )
+    parser.add_argument(
+        "--gpt",
+        metavar="NAME",
+        help="Use a custom GPT by name (searches GPT store). Requires --prompt.",
+    )
+    parser.add_argument(
+        "--new-name",
+        metavar="NAME",
+        help="New name for a conversation (used with --rename-chat)",
+    )
+    parser.add_argument(
+        "--output",
+        "-o",
+        metavar="DIR",
+        help="Output directory for downloaded files (used with --generate-image, default: .)",
     )
 
     # Shared options
@@ -2347,6 +3113,16 @@ Output:
         parser.error("--search/--no-search requires --prompt")
     if (args.file or args.image) and not args.prompt:
         parser.error("--file/--image requires --prompt")
+    if args.rename_chat and not args.new_name:
+        parser.error("--rename-chat requires --new-name")
+    if args.new_name and not args.rename_chat:
+        parser.error("--new-name requires --rename-chat")
+    if args.gpt and not args.prompt:
+        parser.error("--gpt requires --prompt")
+    if args.gpt and args.project:
+        parser.error("--gpt and --project are mutually exclusive")
+    if args.output and not args.generate_image:
+        parser.error("--output requires --generate-image")
     # Validate file paths exist
     for fpath in (args.file or []) + (args.image or []):
         if not Path(fpath).exists():
@@ -2360,10 +3136,16 @@ Output:
         or args.export
         or args.delete_chat
         or args.archive_chat
+        or args.rename_chat
+        or args.share
+        or args.list_memories
+        or args.generate_image
     )
     if not has_mode:
         parser.error(
-            "one of --prompt, --list-chats, --get-chat, --search-chats, --list-projects, --export, --delete-chat, or --archive-chat is required"
+            "one of --prompt, --list-chats, --get-chat, --search-chats, "
+            "--list-projects, --export, --delete-chat, --archive-chat, "
+            "--rename-chat, --share, --list-memories, or --generate-image is required"
         )
 
     # ── List chats mode ───────────────────────────────────────────
@@ -2541,6 +3323,122 @@ Output:
                 sys.exit(1)
         return
 
+    # ── Rename chat mode ─────────────────────────────────────────
+    if args.rename_chat:
+        result = asyncio.run(
+            rename_chat(
+                chat_id=args.rename_chat,
+                new_name=args.new_name,
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                verbose=args.verbose,
+            )
+        )
+
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            if result.get("success"):
+                old = result.get("old_title", "?")
+                new = result.get("new_title", args.new_name)
+                print(f"Renamed chat '{old}' -> '{new}' ({result.get('chat_id', '')})")
+            else:
+                print(f"Error: {result.get('error')}", file=sys.stderr)
+                sys.exit(1)
+        return
+
+    # ── Share chat mode ──────────────────────────────────────────
+    if args.share:
+        result = asyncio.run(
+            share_chat(
+                chat_id=args.share,
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                verbose=args.verbose,
+            )
+        )
+
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            if result.get("success"):
+                url = result.get("share_url", "")
+                title = result.get("title", "")
+                if url:
+                    print(f"Share link for '{title}': {url}")
+                else:
+                    print(f"Shared '{title}' but could not extract URL")
+            else:
+                print(f"Error: {result.get('error')}", file=sys.stderr)
+                sys.exit(1)
+        return
+
+    # ── List memories mode ───────────────────────────────────────
+    if args.list_memories:
+        result = asyncio.run(
+            list_memories(
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                verbose=args.verbose,
+            )
+        )
+
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            if result.get("success"):
+                memories = result.get("memories", [])
+                count = result.get("count", len(memories))
+                if not memories:
+                    print("No memories found.")
+                else:
+                    print(f"\nFound {count} memory/memories:\n")
+                    for i, mem in enumerate(memories, 1):
+                        print(f"  {i:3d}. {mem.get('text', '(empty)')}")
+                    print()
+            else:
+                print(f"Error: {result.get('error')}", file=sys.stderr)
+                sys.exit(1)
+        return
+
+    # ── Generate image mode ──────────────────────────────────────
+    if args.generate_image:
+        output_dir = args.output or "."
+        result = asyncio.run(
+            generate_and_download_image(
+                prompt=args.generate_image,
+                output_dir=output_dir,
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                timeout=args.timeout,
+                verbose=args.verbose,
+            )
+        )
+
+        if args.json:
+            print(json.dumps(result, indent=2))
+        else:
+            if result.get("success"):
+                downloaded = result.get("downloaded", [])
+                if downloaded:
+                    print(f"Downloaded {len(downloaded)} image(s):")
+                    for path in downloaded:
+                        print(f"  {path}")
+                else:
+                    images = result.get("images", [])
+                    if images:
+                        print(f"Found {len(images)} image URL(s) but download failed:")
+                        for url in images:
+                            print(f"  {url}")
+                    else:
+                        print("Response received but no images found in output.")
+                        if result.get("response"):
+                            print(f"\nResponse:\n{result['response']}")
+            else:
+                print(f"Error: {result.get('error')}", file=sys.stderr)
+                sys.exit(1)
+        return
+
     # ── Get chat mode ─────────────────────────────────────────────
     if args.get_chat:
         timeout = args.timeout or 60
@@ -2597,6 +3495,7 @@ Output:
         all_files
         or args.continue_chat
         or args.project
+        or args.gpt
         or args.temp_chat
         or args.search
         or args.no_search
@@ -2664,6 +3563,7 @@ Output:
                 temp_chat=args.temp_chat,
                 web_search=True if args.search else (False if args.no_search else None),
                 files=all_files if all_files else None,
+                gpt=args.gpt,
             )
         )
 

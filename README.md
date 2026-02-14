@@ -1,6 +1,6 @@
 # ChatGPT CLI
 
-Query ChatGPT from the command line using your existing Chrome authentication. Supports GPT-5.2 with 4 thinking modes (Auto, Instant, Thinking, Pro) and legacy models (o3, GPT-4.5). Upload files for analysis and images for vision. Continue existing conversations, start fresh chats, search/export/delete/archive history, extract code blocks, and use temporary chats.
+Query ChatGPT from the command line using your existing Chrome authentication. Supports GPT-5.2 with 4 thinking modes (Auto, Instant, Thinking, Pro) and legacy models (o3, GPT-4.5). Upload files for analysis and images for vision. Continue existing conversations, start fresh chats, search/export/delete/archive/rename/share history, use custom GPTs, generate images with DALL-E, manage memories, extract code blocks, and use temporary chats.
 
 ## Features
 
@@ -8,7 +8,10 @@ Query ChatGPT from the command line using your existing Chrome authentication. S
 - **Legacy Models**: o3, GPT-4.5, GPT-5.1 variants behind a submenu
 - **File Upload**: Send documents for analysis (`--file report.pdf`)
 - **Image Upload**: GPT-5.2 vision for screenshots, diagrams, photos (`--image photo.jpg`)
-- **Conversation Management**: List, search, continue, export, delete, archive chats
+- **Conversation Management**: List, search, continue, export, delete, archive, rename, share chats
+- **Custom GPTs**: Route prompts to any custom GPT by name (`--gpt "CS Tutor"`)
+- **Image Generation**: Generate images with DALL-E and download them (`--generate-image`)
+- **Memory Management**: List ChatGPT's saved memories (`--list-memories`)
 - **Code Extraction**: Pull just the code blocks from responses (`--code-only`)
 - **Multiple Output Formats**: Formatted, JSON, raw text
 - **Project Context**: Send prompts within ChatGPT Projects
@@ -134,6 +137,39 @@ python3 scripts/run.py chatgpt.py --prompt "Design a system" --screenshot /tmp/c
 python3 scripts/run.py chatgpt.py --prompt "One-off question" --temp-chat
 ```
 
+### Custom GPTs
+
+```bash
+# Send prompt to a custom GPT by name (fuzzy match)
+python3 scripts/run.py chatgpt.py --gpt "CS Tutor" --prompt "Explain recursion" --show-browser
+
+# Custom GPT with a specific thinking mode
+python3 scripts/run.py chatgpt.py --gpt "Code Reviewer" --prompt "Review this function" --model thinking
+```
+
+### Rename, Share & Memories
+
+```bash
+# Rename a conversation
+python3 scripts/run.py chatgpt.py --rename-chat idx-0 --new-name "Quantum Physics Notes" --show-browser
+
+# Generate a shareable link for a conversation
+python3 scripts/run.py chatgpt.py --share idx-0 --show-browser
+
+# List ChatGPT's saved memories
+python3 scripts/run.py chatgpt.py --list-memories --show-browser --json
+```
+
+### Image Generation
+
+```bash
+# Generate an image with DALL-E
+python3 scripts/run.py chatgpt.py --generate-image "A sunset over mountains in watercolor style" --show-browser
+
+# Generate and download to a specific directory
+python3 scripts/run.py chatgpt.py --generate-image "Logo for a coffee shop" --output /tmp/images --show-browser
+```
+
 ### Projects
 
 ```bash
@@ -185,6 +221,10 @@ Modes (mutually exclusive, one required):
   --export ID               Export conversation as md/json/txt
   --delete-chat ID          Delete a conversation
   --archive-chat ID         Archive a conversation
+  --rename-chat ID          Rename a conversation (requires --new-name)
+  --share ID                Generate a shareable link for a conversation
+  --list-memories           List ChatGPT's saved memories
+  --generate-image PROMPT   Generate an image with DALL-E and download it
   --continue-chat ID        Send prompt in existing chat (by idx-N, title, or UUID)
   --new-chat                Force a fresh conversation before sending prompt
 
@@ -192,6 +232,9 @@ Options:
   --model, -m        Model: auto, instant, thinking, pro, o3, gpt-4.5 (default: auto)
   --file PATH        Upload file(s) with prompt (repeatable)
   --image PATH       Upload image(s) for vision (repeatable)
+  --gpt NAME         Use a custom GPT by name (fuzzy match)
+  --new-name NAME    New name for --rename-chat
+  --output, -o DIR   Output directory for --generate-image downloads
   --timeout, -t      Response timeout in seconds (default: model-dependent)
   --screenshot       Save screenshot to this path
   --show-browser     Show browser window (recommended for first use)

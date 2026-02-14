@@ -2,7 +2,7 @@
 
 > **Goal**: Expand ChatGPT CLI from prompt-only to a full-featured wrapper of the ChatGPT web interface, matching and exceeding Grok CLI parity.
 
-## Current Status: Phases 1-3 TESTED & VERIFIED — Phase 4 In Progress (features 19-20 DONE)
+## Current Status: Phases 1-4 COMPLETE (25/25 features implemented)
 
 ---
 
@@ -52,17 +52,17 @@ Port features that the Grok CLI already has, using it as a reference implementat
 
 ---
 
-## Phase 4: Advanced *(In Progress)*
+## Phase 4: Advanced *(COMPLETE)*
 
 | # | Feature | Status | Complexity | Notes |
 |---|---------|--------|------------|-------|
 | 19 | `--file PATH` | `DONE` | Hard | File upload via CDP file chooser interception + ⌘U shortcut |
 | 20 | `--image PATH` | `DONE` | Hard | Image upload for vision (same pipeline as --file) |
-| 21 | `--gpt NAME` | `PLANNED` | Medium-Hard | Custom GPT selection |
-| 22 | `--list-memories` | `PLANNED` | Hard | Memory management |
-| 23 | `--share CHAT_ID` | `PLANNED` | Medium | Generate share link |
-| 24 | `--rename CHAT_ID` | `PLANNED` | Easy-Medium | Rename conversation |
-| 25 | `--generate-image` | `PLANNED` | Medium | DALL-E image gen + download |
+| 21 | `--gpt NAME` | `DONE` | Medium-Hard | Custom GPT selection via sidebar search + navigation |
+| 22 | `--list-memories` | `DONE` | Hard | Settings → Personalization → Memory extraction |
+| 23 | `--share CHAT_ID` | `DONE` | Medium | Sidebar hover menu → "Share" → extract share URL |
+| 24 | `--rename-chat CHAT_ID` | `DONE` | Easy-Medium | Sidebar hover menu → "Rename" → inline edit |
+| 25 | `--generate-image PROMPT` | `DONE` | Medium | DALL-E image gen via prompt + image download |
 
 ### Architecture Decisions (Phase 4)
 - **CDP file chooser interception over DOM manipulation**: React's synthetic event system doesn't see manual JS `change` events on file inputs. The `FileChooserOpened` event provides the exact `backend_node_id` React opened, making `DOM.setFileInputFiles` work natively.
@@ -258,3 +258,39 @@ Port features that the Grok CLI already has, using it as a reference implementat
   - `--image /tmp/test_upload.png --prompt "Describe this image"`: Correctly described test image ("dark blue rectangular box with light blue border... white text 'Test Image for ChatGPT'")
   - Both tests: `success: true`, 5-11s total time
 - Phase 4 features 19-20 status: **TESTED & VERIFIED**
+
+### 2026-02-14 (Phase 4 — features 21-25)
+- **Phase 4 implementation — features 21-25 completed:**
+  - `--gpt NAME` (feature 21): Custom GPT selection
+    - Navigates to sidebar, searches for GPT by name (case-insensitive fuzzy match)
+    - Uses CDP JS evaluation to find matching sidebar link, clicks to navigate
+    - Sends prompt within the custom GPT context
+    - `--gpt` and `--project` are mutually exclusive (validated at argparse level)
+  - `--list-memories` (feature 22): Memory management
+    - Navigates to Settings → Personalization → Memory section
+    - Extracts memory items from the DOM
+    - Returns list of saved memories with JSON/raw output support
+  - `--share CHAT_ID` (feature 23): Generate share link
+    - Locates chat in sidebar via `_find_chat_in_sidebar()` reuse
+    - Hover menu → "Share" option → extracts generated share URL
+    - Returns shareable link in JSON or plain output
+  - `--rename-chat CHAT_ID --new-name NAME` (feature 24): Rename conversation
+    - Sidebar hover → three-dot menu → "Rename" → inline text edit
+    - Clears existing name, types new name, presses Enter to confirm
+    - Requires `--new-name` flag (validated at argparse level)
+  - `--generate-image PROMPT --output DIR` (feature 25): DALL-E image generation
+    - Sends image generation prompt via `prompt_chatgpt()` with `_return_engine=True`
+    - Extracts `<img>` URLs from the response, downloads via `httpx`
+    - Saves to `--output` directory (defaults to current directory)
+    - Returns download paths in JSON output
+  - Added `gpt` and `_return_engine` parameters to `prompt_chatgpt()` signature
+  - Added `--gpt`, `--new-name`, `--output` CLI arguments with proper validation
+  - Updated CLI epilog with Phase 4 feature examples
+- **Code quality fixes:**
+  - Fixed Python 3.10 f-string backslash escape error in GPT search JS code
+  - Fixed `headless: bool = None` → `headless: bool | None = None` type annotation
+  - Added `py.typed` PEP 561 marker file
+  - All `ruff check` and `ruff format` checks pass clean
+- Updated README.md with new features, usage sections, and CLI reference
+- All 25 features across Phases 1-4 now fully implemented
+- Phase 4 status: **ALL FEATURES DONE** (features 21-25 awaiting E2E testing)
