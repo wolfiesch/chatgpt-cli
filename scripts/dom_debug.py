@@ -9,13 +9,12 @@ Usage:
 import asyncio
 import json
 import sys
-import time
 
 import nodriver as uc
 from nodriver import cdp
 
 from config import (
-    HEADLESS, USER_DATA_DIR, BROWSER_ARGS,
+    USER_DATA_DIR, BROWSER_ARGS,
     CHATGPT_URL, CHATGPT_COOKIE_DOMAINS,
     CHATGPT_INPUT_SELECTORS, CHATGPT_SEND_SELECTORS,
     CHATGPT_RESPONSE_SELECTORS, CHATGPT_SIDEBAR_SELECTORS,
@@ -365,7 +364,7 @@ async def main():
                     if btn:
                         await btn.click()
                         sent = True
-                        print(f"    -> Clicked!")
+                        print("    -> Clicked!")
                         break
             else:
                 print(f"  - {sel}: not found")

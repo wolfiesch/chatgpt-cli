@@ -14,13 +14,12 @@ Usage:
 import asyncio
 import json
 import sys
-import time
 
 import nodriver as uc
 from nodriver import cdp
 
 from config import (
-    HEADLESS, USER_DATA_DIR, BROWSER_ARGS,
+    USER_DATA_DIR, BROWSER_ARGS,
     CHATGPT_URL, CHATGPT_COOKIE_DOMAINS,
     clean_browser_locks,
 )
@@ -110,11 +109,10 @@ async def probe_selectors(page, title, selectors):
 
 
 async def main():
-    timeout = 20
     if "--timeout" in sys.argv:
         idx = sys.argv.index("--timeout")
         if idx + 1 < len(sys.argv):
-            timeout = int(sys.argv[idx + 1])
+            int(sys.argv[idx + 1])  # validate but unused for now
 
     # Extract cookies
     print("Extracting cookies...")

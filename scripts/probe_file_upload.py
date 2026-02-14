@@ -10,13 +10,12 @@ Usage:
 import asyncio
 import json
 import sys
-import time
 
 import nodriver as uc
 from nodriver import cdp
 
 from config import (
-    HEADLESS, USER_DATA_DIR, BROWSER_ARGS,
+    USER_DATA_DIR, BROWSER_ARGS,
     CHATGPT_URL, CHATGPT_COOKIE_DOMAINS,
     clean_browser_locks,
 )
@@ -84,9 +83,12 @@ async def main():
                 "name": c["name"], "value": c["value"],
                 "domain": c["domain"], "path": c.get("path", "/"),
             }
-            if c.get("secure"): params["secure"] = True
-            if c.get("httpOnly"): params["httpOnly"] = True
-            if c.get("sameSite"): params["sameSite"] = c["sameSite"]
+            if c.get("secure"):
+                params["secure"] = True
+            if c.get("httpOnly"):
+                params["httpOnly"] = True
+            if c.get("sameSite"):
+                params["sameSite"] = c["sameSite"]
             if c.get("expirationDate"):
                 params["expires"] = c["expirationDate"]
             await page.send(cdp.network.set_cookie(**params))

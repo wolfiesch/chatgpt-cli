@@ -37,12 +37,10 @@ def estimate_tokens(text: str) -> int:
 from config import (
     HEADLESS, USER_DATA_DIR, BROWSER_ARGS, DEFAULT_TIMEOUT,
     CHATGPT_URL, CHATGPT_COOKIE_DOMAINS,
-    CHATGPT_INPUT_SELECTORS, CHATGPT_SEND_SELECTORS, CHATGPT_RESPONSE_SELECTORS,
-    CHATGPT_THINKING_INDICATORS, CHATGPT_STOP_SELECTORS, CHATGPT_MODEL_SELECTOR,
-    CHATGPT_MODELS, CHATGPT_MODEL_TESTIDS, CHATGPT_LEGACY_MODELS,
+    CHATGPT_INPUT_SELECTORS, CHATGPT_SEND_SELECTORS, CHATGPT_MODELS, CHATGPT_MODEL_TESTIDS, CHATGPT_LEGACY_MODELS,
     CHATGPT_LEGACY_SUBMENU_TESTID,
     DEFAULT_MODEL, MODEL_TIMEOUTS,
-    CHATGPT_SIDEBAR_SELECTORS, CHATGPT_CHAT_MESSAGE_SELECTORS, CHATGPT_CHAT_URL,
+    CHATGPT_CHAT_URL,
     POLL_INTERVAL, STABILITY_THRESHOLD,
 )
 from chrome_cookies import extract_cookies as extract_chrome_cookies
@@ -609,7 +607,6 @@ async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: 
     last_text = ""
     stable_count = 0
     thinking_time = 0
-    response_started = False
 
     while time.time() - start_time < timeout:
         try:
@@ -638,7 +635,6 @@ async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: 
 
             if thinking_match is not None and thinking_match >= 0:
                 thinking_time = thinking_match
-                response_started = True
 
             full_page_text = await engine.run_js('document.body.innerText') or ""
             response_text = ""
@@ -656,8 +652,8 @@ async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: 
             thought_match = re.search(r'Thought for \d+ seconds?\s*>?\s*', full_page_text, re.IGNORECASE)
             if thought_match:
                 after_thought = full_page_text[thought_match.end():].strip()
-                lines = [l.strip() for l in after_thought.split('\n') if l.strip()]
-                filtered = [l for l in lines if not _ui_chrome_re.match(l)]
+                lines = [line.strip() for line in after_thought.split('\n') if line.strip()]
+                filtered = [line for line in lines if not _ui_chrome_re.match(line)]
                 if filtered:
                     response_text = '\n'.join(filtered)
 
@@ -670,14 +666,12 @@ async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: 
                 })()''') or ""
 
                 if prose_text:
-                    lines = [l.strip() for l in prose_text.split('\n') if l.strip()]
-                    filtered = [l for l in lines if not _ui_chrome_re.match(l)]
+                    lines = [line.strip() for line in prose_text.split('\n') if line.strip()]
+                    filtered = [line for line in lines if not _ui_chrome_re.match(line)]
                     if filtered:
                         response_text = '\n'.join(filtered)
 
             if response_text:
-                response_started = True
-
                 if not is_generating:
                     if response_text == last_text:
                         stable_count += 1
@@ -1008,7 +1002,7 @@ async def prompt_chatgpt(
                     await engine.mouse_click(search_toggle['x'], search_toggle['y'])
                     await engine.sleep(0.5)
                 else:
-                    _log(f"web_search: already in desired state", verbose)
+                    _log("web_search: already in desired state", verbose)
             else:
                 _log("web_search: toggle not found in UI, skipping", verbose)
 
@@ -1363,7 +1357,7 @@ async def get_chatgpt_chat(
                     break
 
             if not found:
-                titles = [l['title'] for l in (chat_links or [])[:5]]
+                titles = [link['title'] for link in (chat_links or [])[:5]]
                 return {
                     "success": False,
                     "error": f"Chat '{chat_id}' not found in sidebar. Available: {titles}"
@@ -1788,9 +1782,9 @@ def format_chat_export(result: dict, fmt: str) -> str:
         role = msg.get("role", "unknown")
         text = msg.get("text", "")
         if role == "user":
-            lines.append(f"## User")
+            lines.append("## User")
         else:
-            lines.append(f"## Assistant")
+            lines.append("## Assistant")
         lines.append("")
         lines.append(text)
         lines.append("")
@@ -2170,7 +2164,7 @@ Output:
                         # Show short ID for display
                         display_id = chat_id[:12] + "..." if len(chat_id) > 15 else chat_id
                         print(f"  {i:3d}. [{display_id}] {title}{date_str}")
-                    print(f"\nUse --get-chat <CHAT_ID> to retrieve a conversation.")
+                    print("\nUse --get-chat <CHAT_ID> to retrieve a conversation.")
             else:
                 print(f"Error: {result.get('error')}", file=sys.stderr)
                 sys.exit(1)
@@ -2200,7 +2194,7 @@ Output:
                         chat_id = chat.get("id", "?")
                         display_id = chat_id[:12] + "..." if len(chat_id) > 15 else chat_id
                         print(f"  {i:3d}. [{display_id}] {title}")
-                    print(f"\nUse --get-chat <CHAT_ID> to retrieve a conversation.")
+                    print("\nUse --get-chat <CHAT_ID> to retrieve a conversation.")
             else:
                 print(f"Error: {result.get('error')}", file=sys.stderr)
                 sys.exit(1)
@@ -2227,7 +2221,7 @@ Output:
                         name = proj.get("name", "Untitled")
                         pid = proj.get("id", "?")
                         print(f"  {i:3d}. [{pid}] {name}")
-                    print(f"\nUse --project <NAME> --prompt <TEXT> to send a prompt within a project.")
+                    print("\nUse --project <NAME> --prompt <TEXT> to send a prompt within a project.")
             else:
                 print(f"Error: {result.get('error')}", file=sys.stderr)
                 sys.exit(1)
