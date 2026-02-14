@@ -1,6 +1,6 @@
 [project]
 name = "chatgpt-cli"
-version = "0.1.0"
+version = "0.1.0"  # keep in sync with scripts/_version.py
 description = "CLI tool for querying ChatGPT via stealth browser automation"
 requires-python = ">=3.10"
 dependencies = [

@@ -14,7 +14,7 @@ import sys
 import time
 from pathlib import Path
 
-__version__ = "0.1.0"
+from _version import __version__
 
 sys.path.insert(0, str(Path.home() / ".claude/skills/shared"))
 from browser_engine import create_engine, add_engine_argument, BrowserEngine

@@ -9,6 +9,8 @@ import sys
 import subprocess
 from pathlib import Path
 
+from _version import __version__
+
 
 def get_venv_python():
     """Get the virtual environment Python executable"""
@@ -43,9 +45,6 @@ def ensure_venv():
         print("Environment ready!")
 
     return get_venv_python()
-
-
-__version__ = "0.1.0"
 
 
 def main():

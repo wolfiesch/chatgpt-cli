@@ -39,6 +39,9 @@ pip install -r requirements.txt
 ## Quick Start
 
 ```bash
+# Check version
+python3 scripts/run.py --version
+
 # Basic query (GPT-5.2 Auto mode)
 python3 scripts/run.py chatgpt.py --prompt "Explain quantum entanglement" --show-browser
 
@@ -168,6 +171,10 @@ python3 scripts/run.py chatgpt.py --project "CS Tutor" --prompt "Explain recursi
 
 ```
 python3 scripts/run.py chatgpt.py <mode> [options]
+
+Global:
+  --version, -V           Show version and exit
+  --help, -h              Show help and exit
 
 Modes (mutually exclusive, one required):
   --prompt, -p TEXT         Send a prompt to ChatGPT
