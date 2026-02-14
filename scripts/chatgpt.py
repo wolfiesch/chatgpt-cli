@@ -35,18 +35,29 @@ def estimate_tokens(text: str) -> int:
 
 
 from config import (
-    HEADLESS, USER_DATA_DIR, BROWSER_ARGS, DEFAULT_TIMEOUT,
-    CHATGPT_URL, CHATGPT_COOKIE_DOMAINS,
-    CHATGPT_INPUT_SELECTORS, CHATGPT_SEND_SELECTORS, CHATGPT_MODELS, CHATGPT_MODEL_TESTIDS, CHATGPT_LEGACY_MODELS,
+    HEADLESS,
+    USER_DATA_DIR,
+    BROWSER_ARGS,
+    DEFAULT_TIMEOUT,
+    CHATGPT_URL,
+    CHATGPT_COOKIE_DOMAINS,
+    CHATGPT_INPUT_SELECTORS,
+    CHATGPT_SEND_SELECTORS,
+    CHATGPT_MODELS,
+    CHATGPT_MODEL_TESTIDS,
+    CHATGPT_LEGACY_MODELS,
     CHATGPT_LEGACY_SUBMENU_TESTID,
-    DEFAULT_MODEL, MODEL_TIMEOUTS,
+    DEFAULT_MODEL,
+    MODEL_TIMEOUTS,
     CHATGPT_CHAT_URL,
-    POLL_INTERVAL, STABILITY_THRESHOLD,
+    POLL_INTERVAL,
+    STABILITY_THRESHOLD,
 )
 from chrome_cookies import extract_cookies as extract_chrome_cookies
 
 
 # ── Shared browser setup ──────────────────────────────────────────────
+
 
 async def _setup_authenticated_browser(
     headless: bool | None = None,
@@ -77,7 +88,7 @@ async def _setup_authenticated_browser(
     if not result.get("success"):
         return {
             "success": False,
-            "error": f"Cookie extraction failed: {result.get('error')}"
+            "error": f"Cookie extraction failed: {result.get('error')}",
         }
     cookies = result.get("cookies", [])
     _log(f"setup: {len(cookies)} cookies extracted", verbose)
@@ -85,7 +96,7 @@ async def _setup_authenticated_browser(
     if not cookies:
         return {
             "success": False,
-            "error": "No ChatGPT cookies found. Make sure you're logged into ChatGPT in Chrome."
+            "error": "No ChatGPT cookies found. Make sure you're logged into ChatGPT in Chrome.",
         }
 
     # Determine browser profile directory
@@ -124,15 +135,15 @@ async def _setup_authenticated_browser(
         return {
             "success": False,
             "error": f"{auth_error} (injected {injected}/{len(cookies)} cookies)",
-            "screenshot": screenshot
+            "screenshot": screenshot,
         }
 
     # Dismiss any modal dialogs
-    await engine.run_js('''(() => {
+    await engine.run_js("""(() => {
         document.dispatchEvent(new KeyboardEvent('keydown', {
             key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true
         }));
-    })()''')
+    })()""")
     await engine.sleep(0.5)
 
     return {
@@ -144,6 +155,7 @@ async def _setup_authenticated_browser(
 
 # ── Auth check ────────────────────────────────────────────────────────
 
+
 async def check_auth_status(engine: BrowserEngine) -> tuple[bool, str]:
     """
     Check if user is authenticated on ChatGPT.
@@ -152,18 +164,24 @@ async def check_auth_status(engine: BrowserEngine) -> tuple[bool, str]:
         tuple: (is_authenticated, error_message)
     """
     current_url = engine.page_url
-    page_text = await engine.run_js('document.body.innerText') or ""
+    page_text = await engine.run_js("document.body.innerText") or ""
 
     if "/auth/login" in current_url or "login" in current_url.lower():
-        return False, "Redirected to login page. Please log into ChatGPT in Chrome first."
+        return (
+            False,
+            "Redirected to login page. Please log into ChatGPT in Chrome first.",
+        )
 
     if "verify you are human" in page_text.lower() or "cloudflare" in page_text.lower():
-        return False, "Cloudflare challenge detected. Use --show-browser flag to bypass."
+        return (
+            False,
+            "Cloudflare challenge detected. Use --show-browser flag to bypass.",
+        )
 
     if "welcome back" in page_text.lower():
         return False, "Login modal detected. Cookie injection may have failed."
 
-    has_login_button = await engine.run_js('''(() => {
+    has_login_button = await engine.run_js("""(() => {
         const buttons = document.querySelectorAll('button, a');
         for (const btn of buttons) {
             const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
@@ -178,7 +196,7 @@ async def check_auth_status(engine: BrowserEngine) -> tuple[bool, str]:
             }
         }
         return false;
-    })()''')
+    })()""")
 
     if has_login_button:
         return False, "Not logged in. Please log into ChatGPT in Chrome first."
@@ -187,8 +205,6 @@ async def check_auth_status(engine: BrowserEngine) -> tuple[bool, str]:
 
 
 # ── Prompt helpers ────────────────────────────────────────────────────
-
-
 
 
 async def _get_element_center(engine: BrowserEngine, testid: str) -> dict | None:
@@ -202,7 +218,9 @@ async def _get_element_center(engine: BrowserEngine, testid: str) -> dict | None
     }})()''')
 
 
-async def select_model(engine: BrowserEngine, model: str, verbose: bool = False) -> bool:
+async def select_model(
+    engine: BrowserEngine, model: str, verbose: bool = False
+) -> bool:
     """Select the specified model in ChatGPT's model dropdown.
 
     Uses data-testid attributes for reliable element targeting, and raw
@@ -219,7 +237,10 @@ async def select_model(engine: BrowserEngine, model: str, verbose: bool = False)
     target_name = CHATGPT_MODELS.get(model, model)
     is_legacy = model in CHATGPT_LEGACY_MODELS
 
-    _log(f"select_model: target='{target_name}' testid={target_testid} legacy={is_legacy}", verbose)
+    _log(
+        f"select_model: target='{target_name}' testid={target_testid} legacy={is_legacy}",
+        verbose,
+    )
 
     try:
         # Step 1: Open model dropdown via CDP mouse click on the button
@@ -228,33 +249,44 @@ async def select_model(engine: BrowserEngine, model: str, verbose: bool = False)
             _log("select_model: could not find model selector button", verbose)
             return False
 
-        _log(f"select_model: clicking dropdown button at ({btn_coords['x']:.0f},{btn_coords['y']:.0f})", verbose)
-        await engine.mouse_click(btn_coords['x'], btn_coords['y'])
+        _log(
+            f"select_model: clicking dropdown button at ({btn_coords['x']:.0f},{btn_coords['y']:.0f})",
+            verbose,
+        )
+        await engine.mouse_click(btn_coords["x"], btn_coords["y"])
         await engine.sleep(1.5)
 
         # Verify dropdown opened
-        is_open = await engine.run_js('''(() => {
+        is_open = await engine.run_js("""(() => {
             const btn = document.querySelector('[data-testid="model-switcher-dropdown-button"]');
             return btn && btn.getAttribute('aria-expanded') === 'true';
-        })()''')
+        })()""")
         if not is_open:
             _log("select_model: dropdown did not open", verbose)
             return False
 
         # Step 2: If legacy model, open the Legacy submenu first
         if is_legacy:
-            legacy_coords = await _get_element_center(engine, CHATGPT_LEGACY_SUBMENU_TESTID)
+            legacy_coords = await _get_element_center(
+                engine, CHATGPT_LEGACY_SUBMENU_TESTID
+            )
             if not legacy_coords:
                 _log("select_model: could not find Legacy models submenu", verbose)
                 return False
-            _log(f"select_model: opening Legacy submenu at ({legacy_coords['x']:.0f},{legacy_coords['y']:.0f})", verbose)
-            await engine.mouse_click(legacy_coords['x'], legacy_coords['y'])
+            _log(
+                f"select_model: opening Legacy submenu at ({legacy_coords['x']:.0f},{legacy_coords['y']:.0f})",
+                verbose,
+            )
+            await engine.mouse_click(legacy_coords["x"], legacy_coords["y"])
             await engine.sleep(1)
 
         # Step 3: Click the target model option by testid
         item_coords = await _get_element_center(engine, target_testid)
         if not item_coords:
-            _log(f"select_model: could not find testid '{target_testid}' in dropdown", verbose)
+            _log(
+                f"select_model: could not find testid '{target_testid}' in dropdown",
+                verbose,
+            )
             # Close dropdown
             try:
                 await engine.key_press("Escape")
@@ -262,15 +294,18 @@ async def select_model(engine: BrowserEngine, model: str, verbose: bool = False)
                 pass
             return False
 
-        _log(f"select_model: clicking '{item_coords.get('text', '?')}' at ({item_coords['x']:.0f},{item_coords['y']:.0f})", verbose)
-        await engine.mouse_click(item_coords['x'], item_coords['y'])
+        _log(
+            f"select_model: clicking '{item_coords.get('text', '?')}' at ({item_coords['x']:.0f},{item_coords['y']:.0f})",
+            verbose,
+        )
+        await engine.mouse_click(item_coords["x"], item_coords["y"])
         await engine.sleep(1)
 
         # Step 4: Verify model switched by checking button text
-        new_text = await engine.run_js('''(() => {
+        new_text = await engine.run_js("""(() => {
             const btn = document.querySelector('[data-testid="model-switcher-dropdown-button"]');
             return btn ? btn.innerText.trim() : '';
-        })()''')
+        })()""")
 
         _log(f"select_model: button now shows '{new_text}'", verbose)
         return True
@@ -288,7 +323,7 @@ async def ensure_new_chat(engine: BrowserEngine, verbose: bool = False) -> bool:
     then falls back to navigating to the base ChatGPT URL.
     """
     # Strategy 1: Click the new chat button
-    clicked = await engine.run_js('''(() => {
+    clicked = await engine.run_js("""(() => {
         // Look for "New chat" link/button in sidebar
         const links = document.querySelectorAll('a, button');
         for (const el of links) {
@@ -302,7 +337,7 @@ async def ensure_new_chat(engine: BrowserEngine, verbose: bool = False) -> bool:
             }
         }
         return false;
-    })()''')
+    })()""")
 
     if clicked:
         _log("ensure_new_chat: clicked New Chat button", verbose)
@@ -332,13 +367,15 @@ async def input_prompt(engine: BrowserEngine, prompt: str) -> bool:
 
     if not input_element:
         try:
-            input_element = await engine.select('div[contenteditable="true"]', timeout=3)
+            input_element = await engine.select(
+                'div[contenteditable="true"]', timeout=3
+            )
         except Exception:
             pass
 
     if not input_element:
         try:
-            found = await engine.run_js('''(() => {
+            found = await engine.run_js("""(() => {
                 let el = document.getElementById('prompt-textarea');
                 if (el) { el.focus(); return true; }
                 el = document.querySelector('.ProseMirror');
@@ -346,9 +383,9 @@ async def input_prompt(engine: BrowserEngine, prompt: str) -> bool:
                 el = document.querySelector('[contenteditable="true"]');
                 if (el) { el.focus(); return true; }
                 return false;
-            })()''')
+            })()""")
             if found:
-                input_element = await engine.select(':focus', timeout=2)
+                input_element = await engine.select(":focus", timeout=2)
         except Exception:
             pass
 
@@ -358,15 +395,16 @@ async def input_prompt(engine: BrowserEngine, prompt: str) -> bool:
     await input_element.click()
     await engine.sleep(0.3)
 
-    escaped_prompt = (prompt
-        .replace('\\', '\\\\')
-        .replace('`', '\\`')
-        .replace('${', '\\${')
-        .replace('\n', '\\n')
-        .replace('\r', '\\r')
-        .replace('\t', '\\t'))
+    escaped_prompt = (
+        prompt.replace("\\", "\\\\")
+        .replace("`", "\\`")
+        .replace("${", "\\${")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
 
-    success = await engine.run_js(f'''(() => {{
+    success = await engine.run_js(f"""(() => {{
         const prompt = `{escaped_prompt}`;
         const el = document.activeElement;
         if (!el) return false;
@@ -390,7 +428,7 @@ async def input_prompt(engine: BrowserEngine, prompt: str) -> bool:
         }}
 
         return false;
-    }})()''')
+    }})()""")
 
     if not success:
         try:
@@ -413,7 +451,7 @@ async def send_prompt(engine: BrowserEngine) -> bool:
         except Exception:
             continue
 
-    sent = await engine.run_js('''(() => {
+    sent = await engine.run_js("""(() => {
         const buttons = document.querySelectorAll('button');
         for (const btn of buttons) {
             const label = btn.getAttribute('aria-label') || '';
@@ -426,18 +464,18 @@ async def send_prompt(engine: BrowserEngine) -> bool:
             }
         }
         return false;
-    })()''')
+    })()""")
 
     if sent:
         return True
 
     try:
-        focused = await engine.select(':focus', timeout=1)
+        focused = await engine.select(":focus", timeout=1)
         if focused:
             try:
-                await focused.send_keys('\n')
+                await focused.send_keys("\n")
             except AttributeError:
-                await focused.type('\n')
+                await focused.type("\n")
             return True
     except Exception:
         pass
@@ -476,6 +514,7 @@ async def _upload_attachments(
     if engine.has_cdp:
         # ── CDP path (nodriver): intercept file chooser + DOM.setFileInputFiles ──
         from nodriver import cdp as _cdp
+
         raw_page = engine.get_raw_page()
 
         loop = asyncio.get_event_loop()
@@ -491,10 +530,12 @@ async def _upload_attachments(
                 await raw_page.send(
                     _cdp.page.set_intercept_file_chooser_dialog(enabled=False)
                 )
-                await raw_page.send(_cdp.dom.set_file_input_files(
-                    files=abs_paths,
-                    backend_node_id=event.backend_node_id,
-                ))
+                await raw_page.send(
+                    _cdp.dom.set_file_input_files(
+                        files=abs_paths,
+                        backend_node_id=event.backend_node_id,
+                    )
+                )
                 _log("upload: DOM.setFileInputFiles succeeded", verbose)
                 if not chooser_future.done():
                     chooser_future.set_result(True)
@@ -505,7 +546,9 @@ async def _upload_attachments(
 
         try:
             raw_page.add_handler(_cdp.page.FileChooserOpened, _on_file_chooser)
-            await raw_page.send(_cdp.page.set_intercept_file_chooser_dialog(enabled=True))
+            await raw_page.send(
+                _cdp.page.set_intercept_file_chooser_dialog(enabled=True)
+            )
             _log("upload: sending ⌘U to trigger file picker", verbose)
             await engine.key_combo("u", meta=True)
 
@@ -524,7 +567,7 @@ async def _upload_attachments(
             _log("upload: waiting for file processing...", verbose)
             await engine.sleep(3)
 
-            attached = await engine.run_js('''(() => {
+            attached = await engine.run_js("""(() => {
                 const indicators = document.querySelectorAll(
                     '[data-testid*="attachment"], [class*="attachment"], ' +
                     '[class*="file-chip"], [class*="uploaded"], ' +
@@ -532,7 +575,7 @@ async def _upload_attachments(
                     'form [class*="preview"]'
                 );
                 return {count: indicators.length};
-            })()''')
+            })()""")
 
             _log(f"upload: attachment indicators: {attached}", verbose)
             return {
@@ -577,13 +620,13 @@ async def _upload_attachments(
                 }
 
             await engine.sleep(3)
-            attached = await engine.run_js('''(() => {
+            attached = await engine.run_js("""(() => {
                 const indicators = document.querySelectorAll(
                     '[data-testid*="attachment"], [class*="attachment"], ' +
                     '[class*="file-chip"], [class*="uploaded"]'
                 );
                 return {count: indicators.length};
-            })()''')
+            })()""")
 
             _log(f"upload: attachment indicators: {attached}", verbose)
             return {
@@ -598,7 +641,9 @@ async def _upload_attachments(
             return {"success": False, "error": f"File upload failed: {e}"}
 
 
-async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: float = POLL_INTERVAL) -> tuple[str, int]:
+async def wait_for_response(
+    engine: BrowserEngine, timeout: int, poll_interval: float = POLL_INTERVAL
+) -> tuple[str, int]:
     """
     Wait for ChatGPT to complete its response.
     Handles reasoning models that can think for extended periods.
@@ -610,66 +655,78 @@ async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: 
 
     while time.time() - start_time < timeout:
         try:
-            page_text = await engine.run_js('document.body.innerText') or ""
+            page_text = await engine.run_js("document.body.innerText") or ""
 
-            if "rate limit" in page_text.lower() or "too many requests" in page_text.lower():
+            if (
+                "rate limit" in page_text.lower()
+                or "too many requests" in page_text.lower()
+            ):
                 return "", -1
 
             if "something went wrong" in page_text.lower():
                 return "", -2
 
-            is_generating = await engine.run_js('''(() => {
+            is_generating = await engine.run_js("""(() => {
                 const stopBtn = document.querySelector('[data-testid="stop-button"]') ||
                                document.querySelector('[aria-label="Stop generating"]') ||
                                document.querySelector('button.stop-button');
                 return stopBtn !== null;
-            })()''')
+            })()""")
 
-            thinking_match = await engine.run_js('''(() => {
+            thinking_match = await engine.run_js("""(() => {
                 const text = document.body.innerText;
                 const match = text.match(/(?:Thought|Thinking|Reasoned?)\\s+(?:for\\s+)?(\\d+)\\s*(?:second|sec|s)/i);
                 if (match) return parseInt(match[1], 10);
                 if (text.includes('Thinking') || text.includes('Reasoning')) return 0;
                 return -1;
-            })()''')
+            })()""")
 
             if thinking_match is not None and thinking_match >= 0:
                 thinking_time = thinking_match
 
-            full_page_text = await engine.run_js('document.body.innerText') or ""
+            full_page_text = await engine.run_js("document.body.innerText") or ""
             response_text = ""
 
             # UI chrome lines to filter out (compiled once outside loop would be
             # ideal, but re.compile is cheap and this keeps the pattern local)
             _ui_chrome_re = re.compile(
-                r'^(Copy|Share|Like|Dislike|Read aloud|ChatGPT|Ask anything|'
-                r'Extended|Memory|\d+\s*/\s*\d+|Pro thinking|Done|DEVELOPER|'
-                r'Thought for)',
-                re.IGNORECASE
+                r"^(Copy|Share|Like|Dislike|Read aloud|ChatGPT|Ask anything|"
+                r"Extended|Memory|\d+\s*/\s*\d+|Pro thinking|Done|DEVELOPER|"
+                r"Thought for)",
+                re.IGNORECASE,
             )
 
             # Method 1: Look for text after "Thought for X seconds"
-            thought_match = re.search(r'Thought for \d+ seconds?\s*>?\s*', full_page_text, re.IGNORECASE)
+            thought_match = re.search(
+                r"Thought for \d+ seconds?\s*>?\s*", full_page_text, re.IGNORECASE
+            )
             if thought_match:
-                after_thought = full_page_text[thought_match.end():].strip()
-                lines = [line.strip() for line in after_thought.split('\n') if line.strip()]
+                after_thought = full_page_text[thought_match.end() :].strip()
+                lines = [
+                    line.strip() for line in after_thought.split("\n") if line.strip()
+                ]
                 filtered = [line for line in lines if not _ui_chrome_re.match(line)]
                 if filtered:
-                    response_text = '\n'.join(filtered)
+                    response_text = "\n".join(filtered)
 
             # Method 2: Markdown / prose areas (capture full text, not just first line)
             if not response_text:
-                prose_text = await engine.run_js('''(() => {
+                prose_text = (
+                    await engine.run_js("""(() => {
                     const els = document.querySelectorAll('.markdown, .prose, [class*="markdown"]');
                     if (els.length > 0) return els[els.length - 1].innerText.trim();
                     return '';
-                })()''') or ""
+                })()""")
+                    or ""
+                )
 
                 if prose_text:
-                    lines = [line.strip() for line in prose_text.split('\n') if line.strip()]
+                    lines = [
+                        line.strip() for line in prose_text.split("\n") if line.strip()
+                    ]
                     filtered = [line for line in lines if not _ui_chrome_re.match(line)]
                     if filtered:
-                        response_text = '\n'.join(filtered)
+                        response_text = "\n".join(filtered)
 
             if response_text:
                 if not is_generating:
@@ -686,7 +743,7 @@ async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: 
 
             if response_text and not is_generating:
                 await engine.sleep(1)
-                final_text = await engine.run_js('''(() => {
+                final_text = await engine.run_js("""(() => {
                     const selectors = [
                         '[data-message-author-role="assistant"]',
                         '.agent-turn',
@@ -718,7 +775,7 @@ async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: 
                         }
                     }
                     return parts.length > 0 ? parts.join('\\n\\n') : container.innerText;
-                })()''')
+                })()""")
                 if final_text:
                     return final_text.strip(), thinking_time
 
@@ -731,6 +788,7 @@ async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: 
 
 
 # ── Core operations ───────────────────────────────────────────────────
+
 
 async def prompt_chatgpt(
     prompt: str,
@@ -784,11 +842,11 @@ async def prompt_chatgpt(
 
             # Resolve index or title to a real chat ID
             resolved_id = continue_chat_id
-            idx_match = re.match(r'^idx-(\d+)$', continue_chat_id)
-            if idx_match or not re.match(r'^[a-zA-Z0-9-]{20,}$', continue_chat_id):
+            idx_match = re.match(r"^idx-(\d+)$", continue_chat_id)
+            if idx_match or not re.match(r"^[a-zA-Z0-9-]{20,}$", continue_chat_id):
                 # Need to look up from sidebar
                 await engine.sleep(2)
-                chat_links = await engine.run_js('''(() => {
+                chat_links = await engine.run_js("""(() => {
                     const results = [];
                     const links = document.querySelectorAll('a[href*="/c/"]');
                     for (const a of links) {
@@ -800,31 +858,37 @@ async def prompt_chatgpt(
                         results.push({id: chatId, title: text, url: href});
                     }
                     return results;
-                })()''')
+                })()""")
 
                 if idx_match:
                     chat_index = int(idx_match.group(1))
                     if not chat_links or chat_index >= len(chat_links):
                         return {
                             "success": False,
-                            "error": f"Chat index {chat_index} out of range (found {len(chat_links or [])} chats)"
+                            "error": f"Chat index {chat_index} out of range (found {len(chat_links or [])} chats)",
                         }
-                    resolved_id = chat_links[chat_index]['id']
-                    _log(f"continue_chat: resolved idx-{chat_index} -> {resolved_id}", verbose)
+                    resolved_id = chat_links[chat_index]["id"]
+                    _log(
+                        f"continue_chat: resolved idx-{chat_index} -> {resolved_id}",
+                        verbose,
+                    )
                 else:
                     # Title substring search
                     found = None
-                    for link in (chat_links or []):
-                        if continue_chat_id.lower() in link['title'].lower():
+                    for link in chat_links or []:
+                        if continue_chat_id.lower() in link["title"].lower():
                             found = link
                             break
                     if not found:
                         return {
                             "success": False,
-                            "error": f"Chat '{continue_chat_id}' not found in sidebar"
+                            "error": f"Chat '{continue_chat_id}' not found in sidebar",
                         }
-                    resolved_id = found['id']
-                    _log(f"continue_chat: resolved '{continue_chat_id}' -> {resolved_id}", verbose)
+                    resolved_id = found["id"]
+                    _log(
+                        f"continue_chat: resolved '{continue_chat_id}' -> {resolved_id}",
+                        verbose,
+                    )
 
             # Navigate to the existing chat
             chat_url = CHATGPT_CHAT_URL.format(chat_id=resolved_id)
@@ -837,7 +901,7 @@ async def prompt_chatgpt(
             await engine.sleep(2)
 
             # Find the Projects button and expand if needed
-            projects_btn = await engine.run_js('''(() => {
+            projects_btn = await engine.run_js("""(() => {
                 const buttons = document.querySelectorAll('button');
                 for (const btn of buttons) {
                     const text = (btn.innerText || '').trim();
@@ -849,19 +913,19 @@ async def prompt_chatgpt(
                     }
                 }
                 return null;
-            })()''')
+            })()""")
 
             # Expand Projects section if no project links visible
-            project_links_count = await engine.run_js('''(() => {
+            project_links_count = await engine.run_js("""(() => {
                 return document.querySelectorAll('a[href*="/g/g-p-"]').length;
-            })()''')
+            })()""")
 
             if projects_btn and not project_links_count:
-                await engine.mouse_click(projects_btn['x'], projects_btn['y'])
+                await engine.mouse_click(projects_btn["x"], projects_btn["y"])
                 await engine.sleep(1.5)
 
             # Find all project links
-            project_links = await engine.run_js('''(() => {
+            project_links = await engine.run_js("""(() => {
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/g/g-p-"]');
                 for (const a of links) {
@@ -873,7 +937,7 @@ async def prompt_chatgpt(
                     results.push({id: projectId, name: text, url: href});
                 }
                 return results;
-            })()''')
+            })()""")
 
             if not project_links:
                 return {"success": False, "error": "No projects found in sidebar"}
@@ -881,18 +945,20 @@ async def prompt_chatgpt(
             # Match by name (case-insensitive substring) or by ID
             matched = None
             for pl in project_links:
-                if project.lower() in pl['name'].lower() or project == pl['id']:
+                if project.lower() in pl["name"].lower() or project == pl["id"]:
                     matched = pl
                     break
 
             if not matched:
-                available = ", ".join(pl['name'] for pl in project_links)
+                available = ", ".join(pl["name"] for pl in project_links)
                 return {
                     "success": False,
-                    "error": f"Project '{project}' not found. Available: {available}"
+                    "error": f"Project '{project}' not found. Available: {available}",
                 }
 
-            _log(f"project: navigating to '{matched['name']}' ({matched['id']})", verbose)
+            _log(
+                f"project: navigating to '{matched['name']}' ({matched['id']})", verbose
+            )
             project_url = f"https://chatgpt.com{matched['url']}"
             await engine.goto(project_url)
             await engine.sleep(4)
@@ -912,7 +978,7 @@ async def prompt_chatgpt(
             _log("temp_chat: enabling temporary chat mode", verbose)
             # ChatGPT has a "Temporary chat" toggle accessible via the model selector area
             # or via a switch/toggle in the interface. Try multiple strategies.
-            temp_toggled = await engine.run_js('''(() => {
+            temp_toggled = await engine.run_js("""(() => {
                 // Strategy 1: Look for a toggle/switch with temp-related attributes
                 const toggles = document.querySelectorAll(
                     '[data-testid*="temp"], [data-testid*="temporary"], ' +
@@ -936,17 +1002,20 @@ async def prompt_chatgpt(
                     }
                 }
                 return null;
-            })()''')
+            })()""")
 
             if temp_toggled:
-                _log(f"temp_chat: found toggle via {temp_toggled['strategy']}, clicking", verbose)
-                await engine.mouse_click(temp_toggled['x'], temp_toggled['y'])
+                _log(
+                    f"temp_chat: found toggle via {temp_toggled['strategy']}, clicking",
+                    verbose,
+                )
+                await engine.mouse_click(temp_toggled["x"], temp_toggled["y"])
                 await engine.sleep(0.5)
             else:
                 _log("temp_chat: toggle not found, trying URL parameter", verbose)
                 # Fallback: navigate with temporary=true parameter
-                current_url = await engine.run_js('window.location.href')
-                if current_url and '?' in current_url:
+                current_url = await engine.run_js("window.location.href")
+                if current_url and "?" in current_url:
                     await engine.goto(f"{current_url}&temporary-chat=true")
                 else:
                     await engine.goto(f"{CHATGPT_URL}?temporary-chat=true")
@@ -957,7 +1026,7 @@ async def prompt_chatgpt(
             action_label = "enabling" if web_search else "disabling"
             _log(f"web_search: {action_label} web search", verbose)
 
-            search_toggle = await engine.run_js('''(() => {
+            search_toggle = await engine.run_js("""(() => {
                 // Look for search toggle near the input area
                 const toggles = document.querySelectorAll(
                     '[data-testid*="search"], [data-testid*="web-search"], ' +
@@ -992,14 +1061,18 @@ async def prompt_chatgpt(
                     }
                 }
                 return null;
-            })()''')
+            })()""")
 
             if search_toggle:
-                needs_click = (web_search and not search_toggle['isEnabled']) or \
-                              (not web_search and search_toggle['isEnabled'])
+                needs_click = (web_search and not search_toggle["isEnabled"]) or (
+                    not web_search and search_toggle["isEnabled"]
+                )
                 if needs_click:
-                    _log(f"web_search: toggling search (currently {'on' if search_toggle['isEnabled'] else 'off'})", verbose)
-                    await engine.mouse_click(search_toggle['x'], search_toggle['y'])
+                    _log(
+                        f"web_search: toggling search (currently {'on' if search_toggle['isEnabled'] else 'off'})",
+                        verbose,
+                    )
+                    await engine.mouse_click(search_toggle["x"], search_toggle["y"])
                     await engine.sleep(0.5)
                 else:
                     _log("web_search: already in desired state", verbose)
@@ -1026,7 +1099,7 @@ async def prompt_chatgpt(
             return {
                 "success": False,
                 "error": "Could not find ChatGPT input field",
-                "screenshot": screenshot
+                "screenshot": screenshot,
             }
 
         await engine.sleep(0.5)
@@ -1038,7 +1111,7 @@ async def prompt_chatgpt(
             return {
                 "success": False,
                 "error": "Could not find send button",
-                "screenshot": screenshot
+                "screenshot": screenshot,
             }
 
         # Wait for response
@@ -1054,21 +1127,21 @@ async def prompt_chatgpt(
                 "success": False,
                 "error": "Rate limit reached. Wait before trying again.",
                 "rate_limited": True,
-                "screenshot": screenshot
+                "screenshot": screenshot,
             }
 
         if thinking_time == -2:
             return {
                 "success": False,
                 "error": "ChatGPT returned an error. Try again.",
-                "screenshot": screenshot
+                "screenshot": screenshot,
             }
 
         if not response_text:
             return {
                 "success": False,
                 "error": "Timeout waiting for ChatGPT response",
-                "screenshot": screenshot
+                "screenshot": screenshot,
             }
 
         response_tokens = estimate_tokens(response_text)
@@ -1085,18 +1158,15 @@ async def prompt_chatgpt(
             "tokens": {
                 "response": response_tokens,
                 "prompt": prompt_tokens,
-                "total": response_tokens + prompt_tokens
+                "total": response_tokens + prompt_tokens,
             },
-            "screenshot": screenshot
+            "screenshot": screenshot,
         }
 
     except Exception as e:
         import traceback
-        return {
-            "success": False,
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
+
+        return {"success": False, "error": str(e), "traceback": traceback.format_exc()}
 
     finally:
         if engine:
@@ -1136,7 +1206,7 @@ async def list_chatgpt_chats(
 
         # Strategy 1: Extract chat links directly from DOM (most reliable)
         # ChatGPT sidebar uses <a href="/c/{conversation_id}"> elements
-        chat_links = await engine.run_js('''(() => {
+        chat_links = await engine.run_js("""(() => {
             const results = [];
             const links = document.querySelectorAll('a[href*="/c/"]');
             for (const a of links) {
@@ -1177,42 +1247,69 @@ async def list_chatgpt_chats(
                 });
             }
             return results;
-        })()''')
+        })()""")
 
-        _log(f"list_chats: DOM extraction found {len(chat_links or [])} chat links", verbose)
+        _log(
+            f"list_chats: DOM extraction found {len(chat_links or [])} chat links",
+            verbose,
+        )
 
         chats = []
         if chat_links:
             for link in chat_links[:limit]:
-                chats.append({
-                    'id': link.get('id', ''),
-                    'title': link.get('title', 'Untitled'),
-                    'url': link.get('url', ''),
-                    'date': link.get('date', ''),
-                })
+                chats.append(
+                    {
+                        "id": link.get("id", ""),
+                        "title": link.get("title", "Untitled"),
+                        "url": link.get("url", ""),
+                        "date": link.get("date", ""),
+                    }
+                )
 
         # Strategy 2: Fallback to innerText parsing if DOM extraction failed
         if not chats:
             _log("list_chats: DOM extraction failed, trying innerText parsing", verbose)
-            page_text = await engine.run_js('document.body.innerText') or ""
+            page_text = await engine.run_js("document.body.innerText") or ""
 
             date_headers = {
-                'Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days',
-                'Last week', 'Last month', 'Older',
-                'January', 'February', 'March', 'April', 'May', 'June',
-                'July', 'August', 'September', 'October', 'November', 'December',
+                "Today",
+                "Yesterday",
+                "Previous 7 Days",
+                "Previous 30 Days",
+                "Last week",
+                "Last month",
+                "Older",
+                "January",
+                "February",
+                "March",
+                "April",
+                "May",
+                "June",
+                "July",
+                "August",
+                "September",
+                "October",
+                "November",
+                "December",
             }
             skip_texts = {
-                'ChatGPT', 'Explore GPTs', 'New chat', 'Search',
-                'Upgrade plan', 'Settings', 'Help', 'Profile',
-                'Ask anything', 'Message ChatGPT',
+                "ChatGPT",
+                "Explore GPTs",
+                "New chat",
+                "Search",
+                "Upgrade plan",
+                "Settings",
+                "Help",
+                "Profile",
+                "Ask anything",
+                "Message ChatGPT",
             }
             _date_line_re = re.compile(
-                r'^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}$'
+                r"^(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}$"
             )
 
-            current_date = ''
-            for line in page_text.split('\n'):
+            current_date = ""
+            for line in page_text.split("\n"):
                 line = line.strip()
                 if not line or len(line) < 3:
                     continue
@@ -1232,12 +1329,14 @@ async def list_chatgpt_chats(
                     continue
 
                 if len(chats) < limit:
-                    chats.append({
-                        'id': f'idx-{len(chats)}',
-                        'title': line[:200],
-                        'url': '',
-                        'date': current_date,
-                    })
+                    chats.append(
+                        {
+                            "id": f"idx-{len(chats)}",
+                            "title": line[:200],
+                            "url": "",
+                            "date": current_date,
+                        }
+                    )
 
         _log(f"list_chats: {len(chats)} chats found", verbose)
 
@@ -1248,10 +1347,7 @@ async def list_chatgpt_chats(
         }
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
     finally:
         if engine:
@@ -1281,7 +1377,7 @@ async def get_chatgpt_chat(
     Returns:
         dict with success status, chat metadata, and list of messages.
     """
-    idx_match = re.match(r'^idx-(\d+)$', chat_id)
+    idx_match = re.match(r"^idx-(\d+)$", chat_id)
     is_index = idx_match is not None
     chat_index: int = int(idx_match.group(1)) if idx_match else 0
 
@@ -1306,7 +1402,7 @@ async def get_chatgpt_chat(
             await engine.sleep(3)
 
             # Get ordered list of chat links
-            chat_links = await engine.run_js('''(() => {
+            chat_links = await engine.run_js("""(() => {
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/c/"]');
                 for (const a of links) {
@@ -1318,24 +1414,27 @@ async def get_chatgpt_chat(
                     results.push({id: chatId, title: text, url: href});
                 }
                 return results;
-            })()''')
+            })()""")
 
             if not chat_links or chat_index >= len(chat_links):
                 return {
                     "success": False,
-                    "error": f"Chat index {chat_index} out of range (found {len(chat_links or [])} chats)"
+                    "error": f"Chat index {chat_index} out of range (found {len(chat_links or [])} chats)",
                 }
 
             target = chat_links[chat_index]
-            chat_id = target['id']
-            target_title = target['title']
-            _log(f"get_chat: index {chat_index} → id={chat_id} title=\"{target_title}\"", verbose)
+            chat_id = target["id"]
+            target_title = target["title"]
+            _log(
+                f'get_chat: index {chat_index} → id={chat_id} title="{target_title}"',
+                verbose,
+            )
 
-        elif not re.match(r'^[a-zA-Z0-9-]{20,}$', chat_id):
+        elif not re.match(r"^[a-zA-Z0-9-]{20,}$", chat_id):
             # Looks like a title substring, not a conversation ID
             await engine.sleep(3)
 
-            chat_links = await engine.run_js('''(() => {
+            chat_links = await engine.run_js("""(() => {
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/c/"]');
                 for (const a of links) {
@@ -1347,25 +1446,27 @@ async def get_chatgpt_chat(
                     results.push({id: chatId, title: text, url: href});
                 }
                 return results;
-            })()''')
+            })()""")
 
             # Find by title substring
             found = None
-            for link in (chat_links or []):
-                if chat_id.lower() in link['title'].lower():
+            for link in chat_links or []:
+                if chat_id.lower() in link["title"].lower():
                     found = link
                     break
 
             if not found:
-                titles = [link['title'] for link in (chat_links or [])[:5]]
+                titles = [link["title"] for link in (chat_links or [])[:5]]
                 return {
                     "success": False,
-                    "error": f"Chat '{chat_id}' not found in sidebar. Available: {titles}"
+                    "error": f"Chat '{chat_id}' not found in sidebar. Available: {titles}",
                 }
 
-            chat_id = found['id']
-            target_title = found['title']
-            _log(f"get_chat: title match → id={chat_id} title=\"{target_title}\"", verbose)
+            chat_id = found["id"]
+            target_title = found["title"]
+            _log(
+                f'get_chat: title match → id={chat_id} title="{target_title}"', verbose
+            )
 
         # Navigate to the chat
         chat_url = CHATGPT_CHAT_URL.format(chat_id=chat_id)
@@ -1380,7 +1481,7 @@ async def get_chatgpt_chat(
         final_messages = None
 
         while time.time() - start_time < timeout:
-            messages = await engine.run_js('''(() => {
+            messages = await engine.run_js("""(() => {
                 const results = [];
 
                 // Strategy 1: Use data-message-author-role (most reliable)
@@ -1425,7 +1526,7 @@ async def get_chatgpt_chat(
                 }
 
                 return results;
-            })()''')
+            })()""")
 
             _log(f"get_chat poll: {len(messages or [])} messages found", verbose)
 
@@ -1449,34 +1550,45 @@ async def get_chatgpt_chat(
             final_messages = last_messages or []
 
         if not final_messages:
-            return {"success": False, "error": "Could not extract conversation messages"}
+            return {
+                "success": False,
+                "error": "Could not extract conversation messages",
+            }
 
         # Clean up messages: strip UI boilerplate from each turn
         cleaned_messages = []
         for i, msg in enumerate(final_messages):
-            text = msg.get('text', '')
-            role = msg.get('role', 'unknown')
+            text = msg.get("text", "")
+            role = msg.get("role", "unknown")
 
             # Strip trailing UI elements from assistant messages
-            if role == 'assistant':
+            if role == "assistant":
                 # Remove trailing "Copy\nShare\nLike\nDislike" etc.
-                for suffix in ['\nCopy', '\nShare', '\nLike', '\nDislike',
-                               '\nRead aloud', '\nSearch']:
+                for suffix in [
+                    "\nCopy",
+                    "\nShare",
+                    "\nLike",
+                    "\nDislike",
+                    "\nRead aloud",
+                    "\nSearch",
+                ]:
                     while text.endswith(suffix):
-                        text = text[:-len(suffix)]
+                        text = text[: -len(suffix)]
 
-            cleaned_messages.append({
-                'role': role,
-                'text': text.strip(),
-                'index': i,
-            })
+            cleaned_messages.append(
+                {
+                    "role": role,
+                    "text": text.strip(),
+                    "index": i,
+                }
+            )
 
         # Get title if we don't have one
         if not target_title and cleaned_messages:
             # Use first user message as title (truncated)
             for msg in cleaned_messages:
-                if msg['role'] == 'user':
-                    target_title = msg['text'][:100]
+                if msg["role"] == "user":
+                    target_title = msg["text"][:100]
                     break
 
         return {
@@ -1488,10 +1600,7 @@ async def get_chatgpt_chat(
         }
 
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
     finally:
         if engine:
@@ -1538,7 +1647,7 @@ async def search_chatgpt_chats(
         await engine.sleep(2)
 
         # Find the search input
-        search_input = await engine.run_js('''(() => {
+        search_input = await engine.run_js("""(() => {
             const inputs = document.querySelectorAll('input');
             for (const inp of inputs) {
                 const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
@@ -1551,16 +1660,22 @@ async def search_chatgpt_chats(
                 }
             }
             return null;
-        })()''')
+        })()""")
 
         if not search_input:
             _log("search: could not find search input", verbose)
-            return {"success": False, "error": "Could not find search input. Cmd+K may not have opened."}
+            return {
+                "success": False,
+                "error": "Could not find search input. Cmd+K may not have opened.",
+            }
 
-        _log(f"search: found input with placeholder={search_input['placeholder']!r}", verbose)
+        _log(
+            f"search: found input with placeholder={search_input['placeholder']!r}",
+            verbose,
+        )
 
         # Click the input to focus it
-        await engine.mouse_click(search_input['x'], search_input['y'])
+        await engine.mouse_click(search_input["x"], search_input["y"])
         await engine.sleep(0.5)
 
         # Type the query via CDP key events
@@ -1572,7 +1687,7 @@ async def search_chatgpt_chats(
         await engine.sleep(3)  # Wait for search results to load
 
         # Extract search results from the dialog
-        results = await engine.run_js('''(() => {
+        results = await engine.run_js("""(() => {
             const results = [];
 
             // Look for chat links inside the search dialog
@@ -1607,7 +1722,7 @@ async def search_chatgpt_chats(
             }
 
             return results;
-        })()''')
+        })()""")
 
         _log(f"search: found {len(results or [])} results", verbose)
 
@@ -1616,11 +1731,13 @@ async def search_chatgpt_chats(
 
         chats = []
         for r in (results or [])[:limit]:
-            chats.append({
-                'id': r.get('id', ''),
-                'title': r.get('title', 'Untitled'),
-                'url': r.get('url', ''),
-            })
+            chats.append(
+                {
+                    "id": r.get("id", ""),
+                    "title": r.get("title", "Untitled"),
+                    "url": r.get("url", ""),
+                }
+            )
 
         return {
             "success": True,
@@ -1667,7 +1784,7 @@ async def list_chatgpt_projects(
         await engine.sleep(3)
 
         # Ensure the Projects section is expanded by clicking the button
-        projects_btn = await engine.run_js('''(() => {
+        projects_btn = await engine.run_js("""(() => {
             const buttons = document.querySelectorAll('button');
             for (const btn of buttons) {
                 const text = (btn.innerText || '').trim();
@@ -1679,24 +1796,27 @@ async def list_chatgpt_projects(
                 }
             }
             return null;
-        })()''')
+        })()""")
 
         if projects_btn:
-            _log(f"list_projects: clicking Projects button at ({projects_btn['x']:.0f},{projects_btn['y']:.0f})", verbose)
+            _log(
+                f"list_projects: clicking Projects button at ({projects_btn['x']:.0f},{projects_btn['y']:.0f})",
+                verbose,
+            )
             # Click to expand (if collapsed) — clicking when already expanded
             # may collapse it, so check first
-            project_links_before = await engine.run_js('''(() => {
+            project_links_before = await engine.run_js("""(() => {
                 return document.querySelectorAll('a[href*="/g/g-p-"]').length;
-            })()''')
+            })()""")
 
             if not project_links_before:
-                await engine.mouse_click(projects_btn['x'], projects_btn['y'])
+                await engine.mouse_click(projects_btn["x"], projects_btn["y"])
                 await engine.sleep(1.5)
         else:
             _log("list_projects: Projects button not found", verbose)
 
         # Extract project links
-        projects = await engine.run_js('''(() => {
+        projects = await engine.run_js("""(() => {
             const results = [];
             const links = document.querySelectorAll('a[href*="/g/g-p-"]');
             for (const a of links) {
@@ -1716,7 +1836,7 @@ async def list_chatgpt_projects(
                 });
             }
             return results;
-        })()''')
+        })()""")
 
         _log(f"list_projects: found {len(projects or [])} projects", verbose)
 
@@ -1741,9 +1861,9 @@ def extract_code_blocks(text: str) -> list[str]:
     Handles ```lang and ``` fences.
     """
     blocks = []
-    pattern = re.compile(r'```(?:\w*)\n(.*?)```', re.DOTALL)
+    pattern = re.compile(r"```(?:\w*)\n(.*?)```", re.DOTALL)
     for match in pattern.finditer(text):
-        code = match.group(1).rstrip('\n')
+        code = match.group(1).rstrip("\n")
         if code:
             blocks.append(code)
     return blocks
@@ -1777,7 +1897,13 @@ def format_chat_export(result: dict, fmt: str) -> str:
         return "\n".join(lines)
 
     # Default: markdown
-    lines = [f"# {title}", "", f"> Chat ID: `{chat_id}`", f"> Messages: {len(messages)}", ""]
+    lines = [
+        f"# {title}",
+        "",
+        f"> Chat ID: `{chat_id}`",
+        f"> Messages: {len(messages)}",
+        "",
+    ]
     for msg in messages:
         role = msg.get("role", "unknown")
         text = msg.get("text", "")
@@ -1824,9 +1950,9 @@ async def delete_or_archive_chat(
 
         # Resolve the chat ID to find the sidebar link
         resolved_id = chat_id
-        idx_match = re.match(r'^idx-(\d+)$', chat_id)
-        if idx_match or not re.match(r'^[a-zA-Z0-9-]{20,}$', chat_id):
-            chat_links = await engine.run_js('''(() => {
+        idx_match = re.match(r"^idx-(\d+)$", chat_id)
+        if idx_match or not re.match(r"^[a-zA-Z0-9-]{20,}$", chat_id):
+            chat_links = await engine.run_js("""(() => {
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/c/"]');
                 for (const a of links) {
@@ -1839,25 +1965,31 @@ async def delete_or_archive_chat(
                     results.push({id: chatId, title: text, x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height});
                 }
                 return results;
-            })()''')
+            })()""")
 
             if idx_match:
                 chat_index = int(idx_match.group(1))
                 if not chat_links or chat_index >= len(chat_links):
-                    return {"success": False, "error": f"Chat index {chat_index} out of range"}
+                    return {
+                        "success": False,
+                        "error": f"Chat index {chat_index} out of range",
+                    }
                 target = chat_links[chat_index]
             else:
                 target = None
-                for link in (chat_links or []):
-                    if chat_id.lower() in link['title'].lower():
+                for link in chat_links or []:
+                    if chat_id.lower() in link["title"].lower():
                         target = link
                         break
                 if not target:
-                    return {"success": False, "error": f"Chat '{chat_id}' not found in sidebar"}
-            resolved_id = target['id']
+                    return {
+                        "success": False,
+                        "error": f"Chat '{chat_id}' not found in sidebar",
+                    }
+            resolved_id = target["id"]
         else:
             # Have a UUID — find it in the sidebar
-            target_info = await engine.run_js(f'''(() => {{
+            target_info = await engine.run_js(f"""(() => {{
                 const links = document.querySelectorAll('a[href*="/c/{resolved_id}"]');
                 for (const a of links) {{
                     const r = a.getBoundingClientRect();
@@ -1866,19 +1998,27 @@ async def delete_or_archive_chat(
                     }}
                 }}
                 return null;
-            }})()''')
+            }})()""")
             if not target_info:
-                return {"success": False, "error": f"Chat '{resolved_id}' not visible in sidebar"}
-            target = {'id': resolved_id, 'title': target_info['title'], 'x': target_info['x'], 'y': target_info['y']}
+                return {
+                    "success": False,
+                    "error": f"Chat '{resolved_id}' not visible in sidebar",
+                }
+            target = {
+                "id": resolved_id,
+                "title": target_info["title"],
+                "x": target_info["x"],
+                "y": target_info["y"],
+            }
 
         _log(f"{action}: targeting chat '{target['title']}' ({resolved_id})", verbose)
 
         # Hover over the chat link to reveal the options button
-        await engine.mouse_move(target['x'], target['y'])
+        await engine.mouse_move(target["x"], target["y"])
         await engine.sleep(0.5)
 
         # Look for the options button (three dots) that appears on hover
-        options_btn = await engine.run_js(f'''(() => {{
+        options_btn = await engine.run_js(f"""(() => {{
             // Look for options button near the hovered chat
             const btns = document.querySelectorAll('button[data-testid*="history-item"][data-testid*="options"]');
             for (const btn of btns) {{
@@ -1891,23 +2031,29 @@ async def delete_or_archive_chat(
             const allBtns = document.querySelectorAll('button[aria-label*="Options"], button[aria-haspopup="menu"]');
             for (const btn of allBtns) {{
                 const r = btn.getBoundingClientRect();
-                if (r.width > 0 && r.height > 0 && Math.abs(r.y - {target['y']}) < 30) {{
+                if (r.width > 0 && r.height > 0 && Math.abs(r.y - {target["y"]}) < 30) {{
                     return {{x: r.x + r.width / 2, y: r.y + r.height / 2, testId: btn.getAttribute('data-testid') || ''}};
                 }}
             }}
             return null;
-        }})()''')
+        }})()""")
 
         if not options_btn:
-            return {"success": False, "error": f"Could not find options button for chat '{target['title']}'"}
+            return {
+                "success": False,
+                "error": f"Could not find options button for chat '{target['title']}'",
+            }
 
-        _log(f"{action}: clicking options button at ({options_btn['x']:.0f},{options_btn['y']:.0f})", verbose)
-        await engine.mouse_click(options_btn['x'], options_btn['y'])
+        _log(
+            f"{action}: clicking options button at ({options_btn['x']:.0f},{options_btn['y']:.0f})",
+            verbose,
+        )
+        await engine.mouse_click(options_btn["x"], options_btn["y"])
         await engine.sleep(1)
 
         # Find the delete/archive menu item
         action_label = "Delete" if action == "delete" else "Archive"
-        menu_item = await engine.run_js(f'''(() => {{
+        menu_item = await engine.run_js(f"""(() => {{
             const items = document.querySelectorAll('[role="menuitem"], [role="option"], button');
             for (const item of items) {{
                 const text = (item.innerText || '').trim();
@@ -1919,18 +2065,21 @@ async def delete_or_archive_chat(
                 }}
             }}
             return null;
-        }})()''')
+        }})()""")
 
         if not menu_item:
-            return {"success": False, "error": f"Could not find '{action_label}' in menu"}
+            return {
+                "success": False,
+                "error": f"Could not find '{action_label}' in menu",
+            }
 
         _log(f"{action}: clicking '{menu_item['text']}' menu item", verbose)
-        await engine.mouse_click(menu_item['x'], menu_item['y'])
+        await engine.mouse_click(menu_item["x"], menu_item["y"])
         await engine.sleep(1)
 
         # Handle confirmation dialog (delete has one, archive may not)
         if action == "delete":
-            confirm_btn = await engine.run_js('''(() => {
+            confirm_btn = await engine.run_js("""(() => {
                 const btns = document.querySelectorAll('button');
                 for (const btn of btns) {
                     const text = (btn.innerText || '').trim().toLowerCase();
@@ -1942,18 +2091,18 @@ async def delete_or_archive_chat(
                     }
                 }
                 return null;
-            })()''')
+            })()""")
 
             if confirm_btn:
                 _log(f"{action}: confirming deletion", verbose)
-                await engine.mouse_click(confirm_btn['x'], confirm_btn['y'])
+                await engine.mouse_click(confirm_btn["x"], confirm_btn["y"])
                 await engine.sleep(1)
 
         return {
             "success": True,
             "action": action,
             "chat_id": resolved_id,
-            "title": target['title'],
+            "title": target["title"],
         }
 
     except Exception as e:
@@ -1965,6 +2114,7 @@ async def delete_or_archive_chat(
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -2024,91 +2174,152 @@ Legacy models (behind submenu):
 Output:
   By default, prints only the response text.
   Use --json for full JSON output with metadata.
-"""
+""",
     )
 
     # Prompt (can be used standalone or with --continue-chat)
-    parser.add_argument("--prompt", "-p",
-                        help="The prompt to send to ChatGPT")
+    parser.add_argument("--prompt", "-p", help="The prompt to send to ChatGPT")
 
     # Browse modes (mutually exclusive with each other)
     browse_group = parser.add_mutually_exclusive_group()
-    browse_group.add_argument("--list-chats", action="store_true",
-                              help="List recent ChatGPT conversations from sidebar")
-    browse_group.add_argument("--get-chat",
-                              metavar="CHAT_ID",
-                              help="Retrieve conversation by index (idx-N), title, or conversation ID")
-    browse_group.add_argument("--search-chats",
-                              metavar="QUERY",
-                              help="Search ChatGPT conversations by keyword")
-    browse_group.add_argument("--list-projects", action="store_true",
-                              help="List ChatGPT Projects from sidebar")
-    browse_group.add_argument("--export",
-                              metavar="CHAT_ID",
-                              help="Export conversation as markdown, JSON, or text (use --format)")
-    browse_group.add_argument("--delete-chat",
-                              metavar="CHAT_ID",
-                              help="Delete a conversation (by index, title, or ID)")
-    browse_group.add_argument("--archive-chat",
-                              metavar="CHAT_ID",
-                              help="Archive a conversation (by index, title, or ID)")
+    browse_group.add_argument(
+        "--list-chats",
+        action="store_true",
+        help="List recent ChatGPT conversations from sidebar",
+    )
+    browse_group.add_argument(
+        "--get-chat",
+        metavar="CHAT_ID",
+        help="Retrieve conversation by index (idx-N), title, or conversation ID",
+    )
+    browse_group.add_argument(
+        "--search-chats",
+        metavar="QUERY",
+        help="Search ChatGPT conversations by keyword",
+    )
+    browse_group.add_argument(
+        "--list-projects",
+        action="store_true",
+        help="List ChatGPT Projects from sidebar",
+    )
+    browse_group.add_argument(
+        "--export",
+        metavar="CHAT_ID",
+        help="Export conversation as markdown, JSON, or text (use --format)",
+    )
+    browse_group.add_argument(
+        "--delete-chat",
+        metavar="CHAT_ID",
+        help="Delete a conversation (by index, title, or ID)",
+    )
+    browse_group.add_argument(
+        "--archive-chat",
+        metavar="CHAT_ID",
+        help="Archive a conversation (by index, title, or ID)",
+    )
 
     # Chat navigation
-    parser.add_argument("--continue-chat",
-                        metavar="CHAT_ID",
-                        help="Continue existing conversation (by index, title, or ID). Requires --prompt.")
-    parser.add_argument("--new-chat", action="store_true",
-                        help="Force a fresh conversation (useful with --prompt)")
-    parser.add_argument("--project",
-                        metavar="NAME",
-                        help="Send prompt within a ChatGPT Project context (by name or ID). Requires --prompt.")
+    parser.add_argument(
+        "--continue-chat",
+        metavar="CHAT_ID",
+        help="Continue existing conversation (by index, title, or ID). Requires --prompt.",
+    )
+    parser.add_argument(
+        "--new-chat",
+        action="store_true",
+        help="Force a fresh conversation (useful with --prompt)",
+    )
+    parser.add_argument(
+        "--project",
+        metavar="NAME",
+        help="Send prompt within a ChatGPT Project context (by name or ID). Requires --prompt.",
+    )
 
     # Shared options
-    parser.add_argument("--timeout", "-t", type=int,
-                        help="Response timeout in seconds (default: model-dependent)")
-    parser.add_argument("--screenshot", "-s",
-                        help="Save screenshot to this path")
-    parser.add_argument("--show-browser", action="store_true",
-                        help="Show browser window (recommended for first use)")
-    parser.add_argument("--headless", action="store_true",
-                        help="Run headless (may be blocked by Cloudflare)")
-    parser.add_argument("--json", action="store_true",
-                        help="Output full JSON response")
-    parser.add_argument("--raw", action="store_true",
-                        help="Output raw response text only (no formatting)")
-    parser.add_argument("--code-only", action="store_true",
-                        help="Extract only fenced code blocks from response")
-    parser.add_argument("--model", "-m",
-                        choices=list(CHATGPT_MODELS.keys()),
-                        default=DEFAULT_MODEL,
-                        help=f"ChatGPT model to use (default: {DEFAULT_MODEL})")
-    parser.add_argument("--session-id",
-                        help="Unique session ID for concurrent queries")
-    parser.add_argument("--limit", type=int, default=50,
-                        help="Max number of chats to list (default: 50, used with --list-chats)")
-    parser.add_argument("--format", "-f",
-                        choices=["md", "json", "txt"],
-                        default="md",
-                        help="Export format (default: md, used with --export)")
-    parser.add_argument("--temp-chat", action="store_true",
-                        help="Enable temporary chat mode (conversation not saved to history)")
-    parser.add_argument("--file", action="append", metavar="PATH",
-                        help="Upload file(s) with the prompt (can be used multiple times)")
-    parser.add_argument("--image", action="append", metavar="PATH",
-                        help="Upload image(s) for vision analysis (can be used multiple times)")
+    parser.add_argument(
+        "--timeout",
+        "-t",
+        type=int,
+        help="Response timeout in seconds (default: model-dependent)",
+    )
+    parser.add_argument("--screenshot", "-s", help="Save screenshot to this path")
+    parser.add_argument(
+        "--show-browser",
+        action="store_true",
+        help="Show browser window (recommended for first use)",
+    )
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="Run headless (may be blocked by Cloudflare)",
+    )
+    parser.add_argument("--json", action="store_true", help="Output full JSON response")
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Output raw response text only (no formatting)",
+    )
+    parser.add_argument(
+        "--code-only",
+        action="store_true",
+        help="Extract only fenced code blocks from response",
+    )
+    parser.add_argument(
+        "--model",
+        "-m",
+        choices=list(CHATGPT_MODELS.keys()),
+        default=DEFAULT_MODEL,
+        help=f"ChatGPT model to use (default: {DEFAULT_MODEL})",
+    )
+    parser.add_argument("--session-id", help="Unique session ID for concurrent queries")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Max number of chats to list (default: 50, used with --list-chats)",
+    )
+    parser.add_argument(
+        "--format",
+        "-f",
+        choices=["md", "json", "txt"],
+        default="md",
+        help="Export format (default: md, used with --export)",
+    )
+    parser.add_argument(
+        "--temp-chat",
+        action="store_true",
+        help="Enable temporary chat mode (conversation not saved to history)",
+    )
+    parser.add_argument(
+        "--file",
+        action="append",
+        metavar="PATH",
+        help="Upload file(s) with the prompt (can be used multiple times)",
+    )
+    parser.add_argument(
+        "--image",
+        action="append",
+        metavar="PATH",
+        help="Upload image(s) for vision analysis (can be used multiple times)",
+    )
     search_group = parser.add_mutually_exclusive_group()
-    search_group.add_argument("--search", action="store_true",
-                              help="Enable web search for this prompt")
-    search_group.add_argument("--no-search", action="store_true",
-                              help="Disable web search for this prompt")
-    parser.add_argument("--verbose", "-v", action="store_true",
-                        help="Enable debug logging to stderr")
-    parser.add_argument("--mode",
-                        choices=["api", "browser", "auto"],
-                        default="auto",
-                        help="Execution mode: 'api' (fast HTTP, no browser), "
-                             "'browser' (stealth browser), 'auto' (try API, "
-                             "fall back to browser). Default: auto")
+    search_group.add_argument(
+        "--search", action="store_true", help="Enable web search for this prompt"
+    )
+    search_group.add_argument(
+        "--no-search", action="store_true", help="Disable web search for this prompt"
+    )
+    parser.add_argument(
+        "--verbose", "-v", action="store_true", help="Enable debug logging to stderr"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["api", "browser", "auto"],
+        default="auto",
+        help="Execution mode: 'api' (fast HTTP, no browser), "
+        "'browser' (stealth browser), 'auto' (try API, "
+        "fall back to browser). Default: auto",
+    )
     add_engine_argument(parser)
 
     args = parser.parse_args()
@@ -2134,18 +2345,31 @@ Output:
     for fpath in (args.file or []) + (args.image or []):
         if not Path(fpath).exists():
             parser.error(f"File not found: {fpath}")
-    has_mode = args.prompt or args.list_chats or args.get_chat or args.search_chats or args.list_projects or args.export or args.delete_chat or args.archive_chat
+    has_mode = (
+        args.prompt
+        or args.list_chats
+        or args.get_chat
+        or args.search_chats
+        or args.list_projects
+        or args.export
+        or args.delete_chat
+        or args.archive_chat
+    )
     if not has_mode:
-        parser.error("one of --prompt, --list-chats, --get-chat, --search-chats, --list-projects, --export, --delete-chat, or --archive-chat is required")
+        parser.error(
+            "one of --prompt, --list-chats, --get-chat, --search-chats, --list-projects, --export, --delete-chat, or --archive-chat is required"
+        )
 
     # ── List chats mode ───────────────────────────────────────────
     if args.list_chats:
-        result = asyncio.run(list_chatgpt_chats(
-            engine_name=args.engine,
-            show_browser=args.show_browser,
-            limit=args.limit,
-            verbose=args.verbose,
-        ))
+        result = asyncio.run(
+            list_chatgpt_chats(
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                limit=args.limit,
+                verbose=args.verbose,
+            )
+        )
 
         if args.json:
             print(json.dumps(result, indent=2))
@@ -2162,7 +2386,9 @@ Output:
                         date = chat.get("date", "")
                         date_str = f"  ({date})" if date else ""
                         # Show short ID for display
-                        display_id = chat_id[:12] + "..." if len(chat_id) > 15 else chat_id
+                        display_id = (
+                            chat_id[:12] + "..." if len(chat_id) > 15 else chat_id
+                        )
                         print(f"  {i:3d}. [{display_id}] {title}{date_str}")
                     print("\nUse --get-chat <CHAT_ID> to retrieve a conversation.")
             else:
@@ -2172,13 +2398,15 @@ Output:
 
     # ── Search chats mode ────────────────────────────────────────────
     if args.search_chats:
-        result = asyncio.run(search_chatgpt_chats(
-            query=args.search_chats,
-            engine_name=args.engine,
-            show_browser=args.show_browser,
-            limit=args.limit,
-            verbose=args.verbose,
-        ))
+        result = asyncio.run(
+            search_chatgpt_chats(
+                query=args.search_chats,
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                limit=args.limit,
+                verbose=args.verbose,
+            )
+        )
 
         if args.json:
             print(json.dumps(result, indent=2))
@@ -2188,11 +2416,15 @@ Output:
                 if not chats:
                     print(f"No chats matching '{args.search_chats}'.")
                 else:
-                    print(f"\nFound {len(chats)} chat(s) matching '{args.search_chats}':\n")
+                    print(
+                        f"\nFound {len(chats)} chat(s) matching '{args.search_chats}':\n"
+                    )
                     for i, chat in enumerate(chats, 1):
                         title = chat.get("title", "Untitled")
                         chat_id = chat.get("id", "?")
-                        display_id = chat_id[:12] + "..." if len(chat_id) > 15 else chat_id
+                        display_id = (
+                            chat_id[:12] + "..." if len(chat_id) > 15 else chat_id
+                        )
                         print(f"  {i:3d}. [{display_id}] {title}")
                     print("\nUse --get-chat <CHAT_ID> to retrieve a conversation.")
             else:
@@ -2202,11 +2434,13 @@ Output:
 
     # ── List projects mode ─────────────────────────────────────────
     if args.list_projects:
-        result = asyncio.run(list_chatgpt_projects(
-            engine_name=args.engine,
-            show_browser=args.show_browser,
-            verbose=args.verbose,
-        ))
+        result = asyncio.run(
+            list_chatgpt_projects(
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                verbose=args.verbose,
+            )
+        )
 
         if args.json:
             print(json.dumps(result, indent=2))
@@ -2221,7 +2455,9 @@ Output:
                         name = proj.get("name", "Untitled")
                         pid = proj.get("id", "?")
                         print(f"  {i:3d}. [{pid}] {name}")
-                    print("\nUse --project <NAME> --prompt <TEXT> to send a prompt within a project.")
+                    print(
+                        "\nUse --project <NAME> --prompt <TEXT> to send a prompt within a project."
+                    )
             else:
                 print(f"Error: {result.get('error')}", file=sys.stderr)
                 sys.exit(1)
@@ -2230,13 +2466,15 @@ Output:
     # ── Export chat mode ───────────────────────────────────────────
     if args.export:
         timeout = args.timeout or 60
-        result = asyncio.run(get_chatgpt_chat(
-            chat_id=args.export,
-            engine_name=args.engine,
-            show_browser=args.show_browser,
-            timeout=timeout,
-            verbose=args.verbose,
-        ))
+        result = asyncio.run(
+            get_chatgpt_chat(
+                chat_id=args.export,
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                timeout=timeout,
+                verbose=args.verbose,
+            )
+        )
 
         if not result.get("success"):
             if args.json:
@@ -2251,19 +2489,23 @@ Output:
 
     # ── Delete chat mode ──────────────────────────────────────────
     if args.delete_chat:
-        result = asyncio.run(delete_or_archive_chat(
-            chat_id=args.delete_chat,
-            action="delete",
-            engine_name=args.engine,
-            show_browser=args.show_browser,
-            verbose=args.verbose,
-        ))
+        result = asyncio.run(
+            delete_or_archive_chat(
+                chat_id=args.delete_chat,
+                action="delete",
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                verbose=args.verbose,
+            )
+        )
 
         if args.json:
             print(json.dumps(result, indent=2))
         else:
             if result.get("success"):
-                print(f"Deleted chat '{result.get('title', '')}' ({result.get('chat_id', '')})")
+                print(
+                    f"Deleted chat '{result.get('title', '')}' ({result.get('chat_id', '')})"
+                )
             else:
                 print(f"Error: {result.get('error')}", file=sys.stderr)
                 sys.exit(1)
@@ -2271,19 +2513,23 @@ Output:
 
     # ── Archive chat mode ─────────────────────────────────────────
     if args.archive_chat:
-        result = asyncio.run(delete_or_archive_chat(
-            chat_id=args.archive_chat,
-            action="archive",
-            engine_name=args.engine,
-            show_browser=args.show_browser,
-            verbose=args.verbose,
-        ))
+        result = asyncio.run(
+            delete_or_archive_chat(
+                chat_id=args.archive_chat,
+                action="archive",
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                verbose=args.verbose,
+            )
+        )
 
         if args.json:
             print(json.dumps(result, indent=2))
         else:
             if result.get("success"):
-                print(f"Archived chat '{result.get('title', '')}' ({result.get('chat_id', '')})")
+                print(
+                    f"Archived chat '{result.get('title', '')}' ({result.get('chat_id', '')})"
+                )
             else:
                 print(f"Error: {result.get('error')}", file=sys.stderr)
                 sys.exit(1)
@@ -2292,13 +2538,15 @@ Output:
     # ── Get chat mode ─────────────────────────────────────────────
     if args.get_chat:
         timeout = args.timeout or 60
-        result = asyncio.run(get_chatgpt_chat(
-            chat_id=args.get_chat,
-            engine_name=args.engine,
-            show_browser=args.show_browser,
-            timeout=timeout,
-            verbose=args.verbose,
-        ))
+        result = asyncio.run(
+            get_chatgpt_chat(
+                chat_id=args.get_chat,
+                engine_name=args.engine,
+                show_browser=args.show_browser,
+                timeout=timeout,
+                verbose=args.verbose,
+            )
+        )
 
         if args.json:
             print(json.dumps(result, indent=2))
@@ -2340,32 +2588,61 @@ Output:
     # Browser-only features: file upload, continue-chat, project,
     # temp-chat, web search toggle, show-browser, screenshot.
     browser_only = bool(
-        all_files or args.continue_chat or args.project or
-        args.temp_chat or args.search or args.no_search or
-        args.show_browser or args.screenshot
+        all_files
+        or args.continue_chat
+        or args.project
+        or args.temp_chat
+        or args.search
+        or args.no_search
+        or args.show_browser
+        or args.screenshot
     )
 
-    use_api = (
-        args.mode in ("api", "auto")
-        and not browser_only
-        and args.prompt
-    )
+    use_api = args.mode in ("api", "auto") and not browser_only and args.prompt
 
     if use_api:
         from api_client import chatgpt_api_prompt
+
         _log("Using API mode (fast HTTP, no browser)", args.verbose)
 
-        result = asyncio.run(chatgpt_api_prompt(
-            prompt=args.prompt,
-            model=args.model,
-            timeout=args.timeout,
-            verbose=args.verbose,
-        ))
+        result = asyncio.run(
+            chatgpt_api_prompt(
+                prompt=args.prompt,
+                model=args.model,
+                timeout=args.timeout,
+                verbose=args.verbose,
+            )
+        )
 
         # Auto mode: fall back to browser if API fails
         if not result.get("success") and args.mode == "auto":
-            _log(f"API mode failed: {result.get('error')}. Falling back to browser.", args.verbose)
-            result = asyncio.run(prompt_chatgpt(
+            _log(
+                f"API mode failed: {result.get('error')}. Falling back to browser.",
+                args.verbose,
+            )
+            result = asyncio.run(
+                prompt_chatgpt(
+                    prompt=args.prompt,
+                    engine_name=args.engine,
+                    headless=args.headless,
+                    timeout=args.timeout,
+                    screenshot=args.screenshot,
+                    show_browser=args.show_browser,
+                    model=args.model,
+                    session_id=args.session_id,
+                    verbose=args.verbose,
+                    new_chat=args.new_chat,
+                )
+            )
+    else:
+        if args.mode == "api" and browser_only:
+            _log(
+                "WARNING: API mode requested but browser-only features used. Using browser.",
+                args.verbose,
+            )
+
+        result = asyncio.run(
+            prompt_chatgpt(
                 prompt=args.prompt,
                 engine_name=args.engine,
                 headless=args.headless,
@@ -2376,34 +2653,21 @@ Output:
                 session_id=args.session_id,
                 verbose=args.verbose,
                 new_chat=args.new_chat,
-            ))
-    else:
-        if args.mode == "api" and browser_only:
-            _log("WARNING: API mode requested but browser-only features used. Using browser.", args.verbose)
-
-        result = asyncio.run(prompt_chatgpt(
-            prompt=args.prompt,
-            engine_name=args.engine,
-            headless=args.headless,
-            timeout=args.timeout,
-            screenshot=args.screenshot,
-            show_browser=args.show_browser,
-            model=args.model,
-            session_id=args.session_id,
-            verbose=args.verbose,
-            new_chat=args.new_chat,
-            continue_chat_id=args.continue_chat,
-            project=args.project,
-            temp_chat=args.temp_chat,
-            web_search=True if args.search else (False if args.no_search else None),
-            files=all_files if all_files else None,
-        ))
+                continue_chat_id=args.continue_chat,
+                project=args.project,
+                temp_chat=args.temp_chat,
+                web_search=True if args.search else (False if args.no_search else None),
+                files=all_files if all_files else None,
+            )
+        )
 
     if args.json:
         if args.code_only and result.get("success"):
             blocks = extract_code_blocks(result.get("response", ""))
             result["code_blocks"] = blocks
-            result["response"] = "\n\n".join(blocks) if blocks else result.get("response", "")
+            result["response"] = (
+                "\n\n".join(blocks) if blocks else result.get("response", "")
+            )
         print(json.dumps(result, indent=2))
     elif args.code_only:
         if result.get("success"):
@@ -2421,15 +2685,19 @@ Output:
                 print(result["response"])
             else:
                 print("\n" + "=" * 60)
-                print(f"Prompt: {args.prompt[:50]}{'...' if len(args.prompt) > 50 else ''}")
+                print(
+                    f"Prompt: {args.prompt[:50]}{'...' if len(args.prompt) > 50 else ''}"
+                )
                 print(f"Model: {result.get('model', 'unknown')}")
-                mode_label = result.get('mode', 'browser')
+                mode_label = result.get("mode", "browser")
                 print(f"Mode: {mode_label}")
                 if result.get("thinking_time_seconds"):
                     print(f"Thinking time: {result['thinking_time_seconds']}s")
                 print(f"Total time: {result.get('total_time_seconds', 0)}s")
                 tokens = result.get("tokens", {})
-                print(f"Tokens: ~{tokens.get('total', 0)} (response: {tokens.get('response', 0)})")
+                print(
+                    f"Tokens: ~{tokens.get('total', 0)} (response: {tokens.get('response', 0)})"
+                )
                 print("=" * 60)
                 print()
                 print(result["response"])

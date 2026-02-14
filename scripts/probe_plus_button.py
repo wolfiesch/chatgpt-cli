@@ -6,6 +6,7 @@ Checks if the web search toggle is hidden behind it.
 Usage:
     python3 scripts/run.py probe_plus_button.py
 """
+
 import asyncio
 import json
 import sys
@@ -14,8 +15,10 @@ import nodriver as uc
 from nodriver import cdp
 
 from config import (
-    USER_DATA_DIR, BROWSER_ARGS,
-    CHATGPT_URL, CHATGPT_COOKIE_DOMAINS,
+    USER_DATA_DIR,
+    BROWSER_ARGS,
+    CHATGPT_URL,
+    CHATGPT_COOKIE_DOMAINS,
     clean_browser_locks,
 )
 from chrome_cookies import extract_cookies as extract_chrome_cookies
@@ -30,7 +33,7 @@ async def _cdp_run_js(page, expression: str):
         if result and result.object_id:
             props, _ = await page.send(
                 cdp.runtime.call_function_on(
-                    'function() { return JSON.stringify(this); }',
+                    "function() { return JSON.stringify(this); }",
                     object_id=result.object_id,
                     return_by_value=True,
                 )
@@ -45,19 +48,27 @@ async def _cdp_run_js(page, expression: str):
 
 async def _cdp_click(page, x, y):
     """Full CDP mouse click sequence (mouseMoved + mousePressed + mouseReleased)."""
-    await page.send(cdp.input_.dispatch_mouse_event(
-        type_="mouseMoved", x=x, y=y
-    ))
+    await page.send(cdp.input_.dispatch_mouse_event(type_="mouseMoved", x=x, y=y))
     await asyncio.sleep(0.05)
-    await page.send(cdp.input_.dispatch_mouse_event(
-        type_="mousePressed", x=x, y=y,
-        button=cdp.input_.MouseButton("left"), click_count=1
-    ))
+    await page.send(
+        cdp.input_.dispatch_mouse_event(
+            type_="mousePressed",
+            x=x,
+            y=y,
+            button=cdp.input_.MouseButton("left"),
+            click_count=1,
+        )
+    )
     await asyncio.sleep(0.05)
-    await page.send(cdp.input_.dispatch_mouse_event(
-        type_="mouseReleased", x=x, y=y,
-        button=cdp.input_.MouseButton("left"), click_count=1
-    ))
+    await page.send(
+        cdp.input_.dispatch_mouse_event(
+            type_="mouseReleased",
+            x=x,
+            y=y,
+            button=cdp.input_.MouseButton("left"),
+            click_count=1,
+        )
+    )
 
 
 async def main():
@@ -81,8 +92,10 @@ async def main():
     for c in cookies:
         try:
             params = {
-                "name": c["name"], "value": c["value"],
-                "domain": c["domain"], "path": c.get("path", "/"),
+                "name": c["name"],
+                "value": c["value"],
+                "domain": c["domain"],
+                "path": c.get("path", "/"),
             }
             if c.get("secure"):
                 params["secure"] = True
@@ -105,7 +118,9 @@ async def main():
 
     # Step 1: Find the '+' button
     print("\n--- Step 1: Locate composer '+' button ---")
-    plus_btn = await _cdp_run_js(page, '''(() => {
+    plus_btn = await _cdp_run_js(
+        page,
+        """(() => {
         const btn = document.querySelector('[data-testid="composer-plus-btn"]');
         if (!btn) return null;
         const rect = btn.getBoundingClientRect();
@@ -115,7 +130,8 @@ async def main():
             y: Math.round(rect.y + rect.height/2),
             tagName: btn.tagName
         };
-    })()''')
+    })()""",
+    )
 
     if not plus_btn:
         print("  FAILED: composer-plus-btn not found!")
@@ -126,14 +142,16 @@ async def main():
 
     # Step 2: Click the '+' button
     print("\n--- Step 2: Click '+' button ---")
-    await _cdp_click(page, plus_btn['x'], plus_btn['y'])
+    await _cdp_click(page, plus_btn["x"], plus_btn["y"])
     await asyncio.sleep(1.5)
 
     # Step 3: Inspect what appeared
     print("\n--- Step 3: Inspect resulting menu/popover ---")
-    
+
     # Check for popover/menu/dialog elements
-    menu_items = await _cdp_run_js(page, '''(() => {
+    menu_items = await _cdp_run_js(
+        page,
+        """(() => {
         const results = [];
         
         // Check popovers, menus, dialogs
@@ -176,21 +194,28 @@ async def main():
         }
         
         return results;
-    })()''')
+    })()""",
+    )
 
     if menu_items:
         for i, menu in enumerate(menu_items):
-            print(f"\n  Container {i}: role={menu['role']}, testid={menu['testid']}, "
-                  f"size={menu['width']}x{menu['height']}, items={menu['itemCount']}")
-            for j, item in enumerate(menu.get('items', [])):
-                print(f"    [{j}] <{item['tagName']}> testid='{item['testid']}' "
-                      f"aria='{item['ariaLabel']}' text='{item['text'][:60]}'")
+            print(
+                f"\n  Container {i}: role={menu['role']}, testid={menu['testid']}, "
+                f"size={menu['width']}x{menu['height']}, items={menu['itemCount']}"
+            )
+            for j, item in enumerate(menu.get("items", [])):
+                print(
+                    f"    [{j}] <{item['tagName']}> testid='{item['testid']}' "
+                    f"aria='{item['ariaLabel']}' text='{item['text'][:60]}'"
+                )
     else:
         print("  No menu/popover containers found via standard selectors")
 
     # Step 4: Broader search - any new visible elements with search-related text
     print("\n--- Step 4: Search for any 'search' related elements ---")
-    search_elements = await _cdp_run_js(page, '''(() => {
+    search_elements = await _cdp_run_js(
+        page,
+        """(() => {
         const results = [];
         const all = document.querySelectorAll('*');
         for (const el of all) {
@@ -215,18 +240,23 @@ async def main():
             });
         }
         return results;
-    })()''')
+    })()""",
+    )
 
     if search_elements:
         for el in search_elements:
-            print(f"  <{el['tag']}> testid='{el['testid']}' aria='{el['ariaLabel']}' "
-                  f"text='{el['text'][:50]}' at ({el['x']},{el['y']})")
+            print(
+                f"  <{el['tag']}> testid='{el['testid']}' aria='{el['ariaLabel']}' "
+                f"text='{el['text'][:50]}' at ({el['x']},{el['y']})"
+            )
     else:
         print("  No search-related elements found anywhere!")
 
     # Step 5: Check for any toggle/switch elements anywhere on page
     print("\n--- Step 5: All toggle/switch elements on page ---")
-    toggles = await _cdp_run_js(page, '''(() => {
+    toggles = await _cdp_run_js(
+        page,
+        """(() => {
         const results = [];
         const switches = document.querySelectorAll(
             '[role="switch"], input[type="checkbox"], [aria-checked], ' +
@@ -252,14 +282,17 @@ async def main():
             });
         }
         return results;
-    })()''')
+    })()""",
+    )
 
     if toggles:
         for t in toggles:
-            print(f"  <{t['tag']}> role={t['role']} checked={t['ariaChecked']} "
-                  f"state={t['dataState']} testid='{t['testid']}' "
-                  f"aria='{t['ariaLabel']}' label='{t['label'][:50]}' "
-                  f"at ({t['x']},{t['y']})")
+            print(
+                f"  <{t['tag']}> role={t['role']} checked={t['ariaChecked']} "
+                f"state={t['dataState']} testid='{t['testid']}' "
+                f"aria='{t['ariaLabel']}' label='{t['label'][:50]}' "
+                f"at ({t['x']},{t['y']})"
+            )
     else:
         print("  No toggle/switch elements found!")
 
@@ -273,14 +306,21 @@ async def main():
 
     # Step 6: Close the menu (press Escape) and check if search appears elsewhere
     print("\n--- Step 6: Close menu, check toolbar area ---")
-    await page.send(cdp.input_.dispatch_key_event(
-        type_="keyDown", key="Escape", code="Escape",
-        windows_virtual_key_code=27, native_virtual_key_code=27,
-    ))
+    await page.send(
+        cdp.input_.dispatch_key_event(
+            type_="keyDown",
+            key="Escape",
+            code="Escape",
+            windows_virtual_key_code=27,
+            native_virtual_key_code=27,
+        )
+    )
     await asyncio.sleep(0.5)
-    
+
     # Check the area near the input for any toolbar buttons
-    toolbar = await _cdp_run_js(page, '''(() => {
+    toolbar = await _cdp_run_js(
+        page,
+        """(() => {
         const results = [];
         const buttons = document.querySelectorAll('button');
         for (const btn of buttons) {
@@ -296,13 +336,16 @@ async def main():
             });
         }
         return results;
-    })()''')
+    })()""",
+    )
 
     if toolbar:
         print(f"  Buttons near input area ({len(toolbar)}):")
         for b in toolbar:
-            print(f"    testid='{b['testid']}' aria='{b['ariaLabel']}' "
-                  f"text='{b['text'][:40]}' at ({b['x']},{b['y']})")
+            print(
+                f"    testid='{b['testid']}' aria='{b['ariaLabel']}' "
+                f"text='{b['text'][:40]}' at ({b['x']},{b['y']})"
+            )
 
     await asyncio.sleep(1)
     await browser.stop()

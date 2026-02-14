@@ -24,7 +24,7 @@ USER_DATA_DIR.mkdir(exist_ok=True)
 
 def clean_browser_locks():
     """Remove stale Chrome singleton locks left by crashed/killed browser processes."""
-    for name in ('SingletonLock', 'SingletonSocket', 'SingletonCookie'):
+    for name in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
         lock = USER_DATA_DIR / name
         if lock.exists() or lock.is_symlink():
             try:
@@ -34,8 +34,12 @@ def clean_browser_locks():
 
 
 # Browser settings
-HEADLESS = os.getenv("HEADLESS", "false").lower() == "true"  # Default to visible for Cloudflare
-DEFAULT_TIMEOUT = int(os.getenv("DEFAULT_TIMEOUT", "300"))  # 5 min default for reasoning models
+HEADLESS = (
+    os.getenv("HEADLESS", "false").lower() == "true"
+)  # Default to visible for Cloudflare
+DEFAULT_TIMEOUT = int(
+    os.getenv("DEFAULT_TIMEOUT", "300")
+)  # 5 min default for reasoning models
 
 # Browser args for stealth
 BROWSER_ARGS = [
@@ -77,7 +81,7 @@ CHATGPT_SEND_SELECTORS = [
     'button[data-testid="send-button"]',
     'button[aria-label="Send prompt"]',
     'button[aria-label="Send"]',
-    'button.send-button',
+    "button.send-button",
     # Voice/attach button area often contains send
     'form button[type="submit"]',
 ]
@@ -85,9 +89,9 @@ CHATGPT_SEND_SELECTORS = [
 # Response container selectors
 CHATGPT_RESPONSE_SELECTORS = [
     'div[data-message-author-role="assistant"]',
-    'div.agent-turn',
+    "div.agent-turn",
     'div[data-testid="conversation-turn-*"]',
-    'div.markdown',
+    "div.markdown",
 ]
 
 # Thinking/reasoning indicators
@@ -102,7 +106,7 @@ CHATGPT_THINKING_INDICATORS = [
 CHATGPT_STOP_SELECTORS = [
     'button[data-testid="stop-button"]',
     'button[aria-label="Stop generating"]',
-    'button.stop-button',
+    "button.stop-button",
 ]
 
 # Model selector (actual data-testid discovered via DOM probing 2026-02-13)
@@ -147,9 +151,13 @@ CHATGPT_MODEL_TESTIDS = {
 
 # Models that require opening the "Legacy models" submenu first
 CHATGPT_LEGACY_MODELS = {
-    "o3", "gpt-4.5",
-    "gpt-5.1-instant", "gpt-5.1-thinking", "gpt-5.1-pro",
-    "gpt-5-mini", "gpt-5-pro",
+    "o3",
+    "gpt-4.5",
+    "gpt-5.1-instant",
+    "gpt-5.1-thinking",
+    "gpt-5.1-pro",
+    "gpt-5-mini",
+    "gpt-5-pro",
 }
 CHATGPT_LEGACY_SUBMENU_TESTID = "Legacy models-submenu"
 
@@ -160,7 +168,7 @@ MODEL_TIMEOUTS = {
     "auto": 120,
     "instant": 60,
     "thinking": 300,
-    "pro": 1800,      # 30 minutes for extended reasoning
+    "pro": 1800,  # 30 minutes for extended reasoning
     "o3": 600,
     "gpt-4.5": 120,
     "gpt-5.1-instant": 60,
@@ -172,18 +180,18 @@ MODEL_TIMEOUTS = {
 
 # Sidebar / chat history selectors
 CHATGPT_SIDEBAR_SELECTORS = [
-    'nav ol li a[href*="/c/"]',       # Primary: chat links in sidebar nav
-    'nav a[href*="/c/"]',             # Broader: any nav chat link
+    'nav ol li a[href*="/c/"]',  # Primary: chat links in sidebar nav
+    'nav a[href*="/c/"]',  # Broader: any nav chat link
     '[class*="conversation-list"] a',  # Fallback: conversation list container
 ]
 
 # Chat message turn selectors (for extracting conversation history)
 CHATGPT_CHAT_MESSAGE_SELECTORS = [
-    'div[data-message-author-role]',                # Primary: role-tagged messages
-    'div[data-message-author-role="assistant"]',     # Assistant-only
-    'div[data-message-author-role="user"]',          # User-only
-    'article[data-testid*="conversation-turn"]',     # Article-based turns
-    '.agent-turn',                                    # Agent turn class
+    "div[data-message-author-role]",  # Primary: role-tagged messages
+    'div[data-message-author-role="assistant"]',  # Assistant-only
+    'div[data-message-author-role="user"]',  # User-only
+    'article[data-testid*="conversation-turn"]',  # Article-based turns
+    ".agent-turn",  # Agent turn class
 ]
 
 # Chat URL pattern

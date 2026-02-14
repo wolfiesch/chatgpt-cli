@@ -15,7 +15,7 @@ def get_venv_python():
     skill_dir = Path(__file__).parent.parent
     venv_dir = skill_dir / ".venv"
 
-    if os.name == 'nt':  # Windows
+    if os.name == "nt":  # Windows
         venv_python = venv_dir / "Scripts" / "python.exe"
     else:  # Unix/Linux/Mac
         venv_python = venv_dir / "bin" / "python"
@@ -51,19 +51,21 @@ def main():
         print("Usage: python run.py <script_name> [args...]")
         print("\nAvailable scripts:")
         print("  chatgpt.py     - Send prompt, list chats, or retrieve conversations")
-        print("  dom_debug.py   - DOM diagnostic tool (inspect selectors, test input/response)")
+        print(
+            "  dom_debug.py   - DOM diagnostic tool (inspect selectors, test input/response)"
+        )
         sys.exit(1)
 
     script_name = sys.argv[1]
     script_args = sys.argv[2:]
 
     # Handle both "scripts/script.py" and "script.py" formats
-    if script_name.startswith('scripts/'):
+    if script_name.startswith("scripts/"):
         script_name = script_name[8:]
 
     # Ensure .py extension
-    if not script_name.endswith('.py'):
-        script_name += '.py'
+    if not script_name.endswith(".py"):
+        script_name += ".py"
 
     # Get script path
     skill_dir = Path(__file__).parent.parent

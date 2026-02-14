@@ -6,6 +6,7 @@ Sends "Hello", waits for response, then inspects what elements contain the text.
 Usage:
     python3 scripts/run.py dom_debug.py [--timeout 20]
 """
+
 import asyncio
 import json
 import sys
@@ -14,10 +15,14 @@ import nodriver as uc
 from nodriver import cdp
 
 from config import (
-    USER_DATA_DIR, BROWSER_ARGS,
-    CHATGPT_URL, CHATGPT_COOKIE_DOMAINS,
-    CHATGPT_INPUT_SELECTORS, CHATGPT_SEND_SELECTORS,
-    CHATGPT_RESPONSE_SELECTORS, CHATGPT_SIDEBAR_SELECTORS,
+    USER_DATA_DIR,
+    BROWSER_ARGS,
+    CHATGPT_URL,
+    CHATGPT_COOKIE_DOMAINS,
+    CHATGPT_INPUT_SELECTORS,
+    CHATGPT_SEND_SELECTORS,
+    CHATGPT_RESPONSE_SELECTORS,
+    CHATGPT_SIDEBAR_SELECTORS,
     CHATGPT_CHAT_MESSAGE_SELECTORS,
     clean_browser_locks,
 )
@@ -40,7 +45,7 @@ async def _cdp_run_js(page, expression: str):
         if result and result.object_id:
             props, _ = await page.send(
                 cdp.runtime.call_function_on(
-                    'function() { return JSON.stringify(this); }',
+                    "function() { return JSON.stringify(this); }",
                     object_id=result.object_id,
                     return_by_value=True,
                 )
@@ -101,14 +106,19 @@ async def main():
                 protocol = "https" if c.get("secure", False) else "http"
                 cookie_url = f"{protocol}://{cookie_domain}{c.get('path', '/')}"
                 param = cdp.network.CookieParam(
-                    name=name, value=c["value"], url=cookie_url,
-                    path="/", secure=True,
+                    name=name,
+                    value=c["value"],
+                    url=cookie_url,
+                    path="/",
+                    secure=True,
                     http_only=c.get("http_only", False),
                     same_site=same_site,
                 )
             else:
                 param = cdp.network.CookieParam(
-                    name=name, value=c["value"], domain=domain,
+                    name=name,
+                    value=c["value"],
+                    domain=domain,
                     path=c.get("path", "/"),
                     secure=c.get("secure", False),
                     http_only=c.get("http_only", False),
@@ -137,25 +147,38 @@ async def main():
         print(f"Early screenshot failed: {e}")
 
     # Debug: check document readiness
-    ready_state = await _cdp_run_js(page, 'document.readyState') or "unknown"
+    ready_state = await _cdp_run_js(page, "document.readyState") or "unknown"
     print(f"document.readyState: {ready_state}")
 
-    body_children = await _cdp_run_js(page, 'document.body ? document.body.children.length : -1')
+    body_children = await _cdp_run_js(
+        page, "document.body ? document.body.children.length : -1"
+    )
     print(f"document.body.children.length: {body_children}")
 
     # Try multiple approaches to get page text
-    page_text_check = await _cdp_run_js(page, "document.body ? document.body.innerText : ''") or ""
+    page_text_check = (
+        await _cdp_run_js(page, "document.body ? document.body.innerText : ''") or ""
+    )
     if not page_text_check:
         # Fallback: try textContent (includes hidden elements)
-        page_text_check = await _cdp_run_js(page, "document.body ? document.body.textContent : ''") or ""
+        page_text_check = (
+            await _cdp_run_js(page, "document.body ? document.body.textContent : ''")
+            or ""
+        )
         if page_text_check:
             print(f"innerText empty but textContent has {len(page_text_check)} chars")
     if not page_text_check:
         # Fallback: try getting text from the React root
-        page_text_check = await _cdp_run_js(page, """(() => {
+        page_text_check = (
+            await _cdp_run_js(
+                page,
+                """(() => {
             const root = document.getElementById('__next') || document.getElementById('root') || document.getElementById('app');
             return root ? root.innerText : '';
-        })()""") or ""
+        })()""",
+            )
+            or ""
+        )
         if page_text_check:
             print(f"React root has {len(page_text_check)} chars")
 
@@ -170,15 +193,21 @@ async def main():
         print("  Waiting 5 more seconds for SPA hydration...")
         await page.sleep(5)
         # Try once more after extra wait
-        page_text_check = await _cdp_run_js(page, "document.body ? document.body.innerText : ''") or ""
+        page_text_check = (
+            await _cdp_run_js(page, "document.body ? document.body.innerText : ''")
+            or ""
+        )
         print(f"  After extra wait: {len(page_text_check)} chars")
 
     # Dismiss modals
-    await _cdp_run_js(page, '''(() => {
+    await _cdp_run_js(
+        page,
+        """(() => {
         document.dispatchEvent(new KeyboardEvent('keydown', {
             key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true
         }));
-    })()''')
+    })()""",
+    )
     await page.sleep(0.5)
 
     # -- SIDEBAR INSPECTION --
@@ -187,20 +216,31 @@ async def main():
     print("=" * 60)
 
     sidebar_selectors = CHATGPT_SIDEBAR_SELECTORS + [
-        'nav', 'nav ol', 'nav ol li', 'nav ol li a',
+        "nav",
+        "nav ol",
+        "nav ol li",
+        "nav ol li a",
         'nav a[href*="/c/"]',
-        '[class*="sidebar"]', '[class*="Sidebar"]',
-        '[class*="conversation"]', '[class*="Conversation"]',
-        '[class*="history"]', '[class*="History"]',
+        '[class*="sidebar"]',
+        '[class*="Sidebar"]',
+        '[class*="conversation"]',
+        '[class*="Conversation"]',
+        '[class*="history"]',
+        '[class*="History"]',
     ]
 
     for sel in sidebar_selectors:
         try:
-            count = await _cdp_run_js(page, f'''(() => {{
+            count = await _cdp_run_js(
+                page,
+                f"""(() => {{
                 return document.querySelectorAll('{sel}').length;
-            }})()''')
+            }})()""",
+            )
             if count and count > 0:
-                text = await _cdp_run_js(page, f'''(() => {{
+                text = await _cdp_run_js(
+                    page,
+                    f"""(() => {{
                     const els = document.querySelectorAll('{sel}');
                     const results = [];
                     for (let i = 0; i < Math.min(els.length, 3); i++) {{
@@ -213,11 +253,12 @@ async def main():
                         }});
                     }}
                     return results;
-                }})()''')
+                }})()""",
+                )
                 print(f"  + {sel}: {count} matches")
-                for item in (text or []):
-                    href = f" href={item['href']}" if item.get('href') else ''
-                    print(f"    <{item['tag']}{href}> \"{item['text'][:60]}\"")
+                for item in text or []:
+                    href = f" href={item['href']}" if item.get("href") else ""
+                    print(f'    <{item["tag"]}{href}> "{item["text"][:60]}"')
             else:
                 print(f"  - {sel}: 0 matches")
         except Exception as e:
@@ -227,19 +268,24 @@ async def main():
     print("\n" + "-" * 60)
     print("CHAT LINKS (a[href*='/c/']):")
     print("-" * 60)
-    chat_links = await _cdp_run_js(page, '''(() => {
+    chat_links = await _cdp_run_js(
+        page,
+        """(() => {
         const links = document.querySelectorAll('a[href*="/c/"]');
         return Array.from(links).slice(0, 20).map(a => ({
             href: a.getAttribute('href'),
             text: (a.innerText || '').trim().substring(0, 100),
             parent: a.parentElement ? a.parentElement.tagName : '',
         }));
-    })()''')
-    for link in (chat_links or []):
-        print(f"  {link['href']}  ->  \"{link['text']}\"  (parent: {link['parent']})")
+    })()""",
+    )
+    for link in chat_links or []:
+        print(f'  {link["href"]}  ->  "{link["text"]}"  (parent: {link["parent"]})')
 
     if not chat_links:
-        print("  (no chat links found - sidebar may need scrolling or different selectors)")
+        print(
+            "  (no chat links found - sidebar may need scrolling or different selectors)"
+        )
 
     # -- INPUT FIELD INSPECTION --
     print("\n" + "=" * 60)
@@ -250,7 +296,9 @@ async def main():
     input_found = False
     for sel in CHATGPT_INPUT_SELECTORS:
         try:
-            el_info = await _cdp_run_js(page, f'''(() => {{
+            el_info = await _cdp_run_js(
+                page,
+                f"""(() => {{
                 const el = document.querySelector('{sel}');
                 if (!el) return null;
                 return {{
@@ -260,18 +308,23 @@ async def main():
                     contentEditable: el.contentEditable,
                     placeholder: el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || '',
                 }};
-            }})()''')
+            }})()""",
+            )
             if el_info:
                 print(f"  + {sel}")
-                print(f"    tag={el_info['tag']} id={el_info['id']} editable={el_info['contentEditable']}")
-                print(f"    placeholder=\"{el_info['placeholder']}\"")
+                print(
+                    f"    tag={el_info['tag']} id={el_info['id']} editable={el_info['contentEditable']}"
+                )
+                print(f'    placeholder="{el_info["placeholder"]}"')
 
                 # Type "Hello" into it
                 input_element = await page.select(sel, timeout=3)
                 if input_element:
                     await input_element.click()
                     await page.sleep(0.3)
-                    await _cdp_run_js(page, '''(() => {
+                    await _cdp_run_js(
+                        page,
+                        """(() => {
                         const el = document.activeElement;
                         if (el && el.isContentEditable) {
                             while (el.firstChild) el.removeChild(el.firstChild);
@@ -286,7 +339,8 @@ async def main():
                             el.value = 'Hello';
                             el.dispatchEvent(new Event('input', {bubbles: true}));
                         }
-                    })()''')
+                    })()""",
+                    )
                     input_found = True
                     break
             else:
@@ -297,7 +351,9 @@ async def main():
     if not input_found:
         print("\n  ERROR: Could not find input field!")
         # Dump all potential input elements
-        inputs = await _cdp_run_js(page, '''(() => {
+        inputs = await _cdp_run_js(
+            page,
+            """(() => {
             const result = [];
             document.querySelectorAll('textarea, [contenteditable="true"], [role="textbox"], input[type="text"]').forEach(el => {
                 result.push({
@@ -309,7 +365,8 @@ async def main():
                 });
             });
             return result;
-        })()''')
+        })()""",
+        )
         print("  Input-like elements found:", json.dumps(inputs, indent=2))
 
         # Save screenshot before exiting
@@ -324,8 +381,11 @@ async def main():
         print("\n" + "=" * 60)
         print("FULL PAGE TEXT (for debug):")
         print("=" * 60)
-        page_text = await _cdp_run_js(page, "document.body ? document.body.innerText : ''") or ""
-        lines = page_text.split('\n')
+        page_text = (
+            await _cdp_run_js(page, "document.body ? document.body.innerText : ''")
+            or ""
+        )
+        lines = page_text.split("\n")
         for i, line in enumerate(lines):
             if line.strip():
                 print(f"  L{i:3d}: {line[:120]}")
@@ -344,7 +404,9 @@ async def main():
     sent = False
     for sel in CHATGPT_SEND_SELECTORS:
         try:
-            btn_info = await _cdp_run_js(page, f'''(() => {{
+            btn_info = await _cdp_run_js(
+                page,
+                f"""(() => {{
                 const btn = document.querySelector('{sel}');
                 if (!btn) return null;
                 return {{
@@ -354,12 +416,15 @@ async def main():
                     testId: btn.getAttribute('data-testid') || '',
                     disabled: btn.disabled || false,
                 }};
-            }})()''')
+            }})()""",
+            )
             if btn_info:
-                status = "DISABLED" if btn_info['disabled'] else "enabled"
+                status = "DISABLED" if btn_info["disabled"] else "enabled"
                 print(f"  + {sel} ({status})")
-                print(f"    label=\"{btn_info['ariaLabel']}\" testId=\"{btn_info['testId']}\"")
-                if not btn_info['disabled']:
+                print(
+                    f'    label="{btn_info["ariaLabel"]}" testId="{btn_info["testId"]}"'
+                )
+                if not btn_info["disabled"]:
                     btn = await page.select(sel, timeout=2)
                     if btn:
                         await btn.click()
@@ -373,10 +438,13 @@ async def main():
 
     if not sent:
         print("  Trying Enter key as fallback...")
-        await _cdp_run_js(page, '''(() => {
+        await _cdp_run_js(
+            page,
+            """(() => {
             const el = document.activeElement;
             if (el) el.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true}));
-        })()''')
+        })()""",
+        )
 
     # Wait for response
     print(f"\nWaiting {timeout} seconds for response...")
@@ -392,31 +460,46 @@ async def main():
     print("RESPONSE CONTAINER INSPECTION")
     print("=" * 60)
 
-    response_selectors = CHATGPT_RESPONSE_SELECTORS + CHATGPT_CHAT_MESSAGE_SELECTORS + [
-        'div[data-message-author-role]',
-        'div[data-message-author-role="assistant"]',
-        'div[data-message-author-role="user"]',
-        'article[data-testid*="conversation"]',
-        '.agent-turn',
-        '.markdown', '[class*="markdown"]',
-        '.prose', '[class*="prose"]',
-        '[class*="message"]', '[class*="Message"]',
-        '[class*="response"]', '[class*="Response"]',
-        '[class*="turn"]', '[class*="Turn"]',
-        '[role="presentation"]',
-    ]
+    response_selectors = (
+        CHATGPT_RESPONSE_SELECTORS
+        + CHATGPT_CHAT_MESSAGE_SELECTORS
+        + [
+            "div[data-message-author-role]",
+            'div[data-message-author-role="assistant"]',
+            'div[data-message-author-role="user"]',
+            'article[data-testid*="conversation"]',
+            ".agent-turn",
+            ".markdown",
+            '[class*="markdown"]',
+            ".prose",
+            '[class*="prose"]',
+            '[class*="message"]',
+            '[class*="Message"]',
+            '[class*="response"]',
+            '[class*="Response"]',
+            '[class*="turn"]',
+            '[class*="Turn"]',
+            '[role="presentation"]',
+        ]
+    )
 
     for sel in response_selectors:
         try:
-            count = await _cdp_run_js(page, f'''(() => {{
+            count = await _cdp_run_js(
+                page,
+                f"""(() => {{
                 return document.querySelectorAll('{sel}').length;
-            }})()''')
+            }})()""",
+            )
             if count and count > 0:
-                text = await _cdp_run_js(page, f'''(() => {{
+                text = await _cdp_run_js(
+                    page,
+                    f"""(() => {{
                     const els = document.querySelectorAll('{sel}');
                     return els[els.length - 1].innerText.substring(0, 120);
-                }})()''')
-                print(f"  + {sel}: {count} matches -> \"{text[:80]}\"")
+                }})()""",
+                )
+                print(f'  + {sel}: {count} matches -> "{text[:80]}"')
             else:
                 print(f"  - {sel}: 0 matches")
         except Exception as e:
@@ -430,18 +513,25 @@ async def main():
     model_selectors = [
         'button[data-testid="model-selector"]',
         'button[aria-haspopup="menu"]',
-        '[class*="model"]', '[class*="Model"]',
+        '[class*="model"]',
+        '[class*="Model"]',
     ]
     for sel in model_selectors:
         try:
-            count = await _cdp_run_js(page, f'''(() => {{
+            count = await _cdp_run_js(
+                page,
+                f"""(() => {{
                 return document.querySelectorAll('{sel}').length;
-            }})()''')
+            }})()""",
+            )
             if count and count > 0:
-                text = await _cdp_run_js(page, f'''(() => {{
+                text = await _cdp_run_js(
+                    page,
+                    f"""(() => {{
                     const els = document.querySelectorAll('{sel}');
                     return Array.from(els).slice(0, 3).map(e => (e.innerText || '').trim().substring(0, 60));
-                }})()''')
+                }})()""",
+                )
                 print(f"  + {sel}: {count} matches -> {text}")
             else:
                 print(f"  - {sel}: 0 matches")
@@ -452,8 +542,8 @@ async def main():
     print("\n" + "=" * 60)
     print("FULL PAGE TEXT (for line-scanning debug):")
     print("=" * 60)
-    page_text = await _cdp_run_js(page, 'document.body.innerText') or ""
-    lines = page_text.split('\n')
+    page_text = await _cdp_run_js(page, "document.body.innerText") or ""
+    lines = page_text.split("\n")
     for i, line in enumerate(lines):
         if line.strip():
             print(f"  L{i:3d}: {line[:120]}")

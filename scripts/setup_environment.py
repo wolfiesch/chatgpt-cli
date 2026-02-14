@@ -12,6 +12,7 @@ from pathlib import Path
 def get_python_executable():
     """Get a compatible Python executable (3.13 preferred for nodriver compatibility)"""
     import shutil
+
     # Try python3.13 first (nodriver has issues with 3.14+)
     python313 = shutil.which("python3.13")
     if python313:
@@ -37,7 +38,7 @@ def setup_venv():
         subprocess.run([python_exe, "-m", "venv", str(venv_dir)], check=True)
 
     # Determine pip path
-    if os.name == 'nt':
+    if os.name == "nt":
         pip_path = venv_dir / "Scripts" / "pip.exe"
     else:
         pip_path = venv_dir / "bin" / "pip"
@@ -49,7 +50,9 @@ def setup_venv():
     # Install requirements
     if requirements_file.exists():
         print("Installing dependencies...")
-        subprocess.run([str(pip_path), "install", "-r", str(requirements_file)], check=True)
+        subprocess.run(
+            [str(pip_path), "install", "-r", str(requirements_file)], check=True
+        )
 
     # Create data directories
     data_dir = skill_dir / "data"

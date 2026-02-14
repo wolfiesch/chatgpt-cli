@@ -73,12 +73,11 @@ def _log(msg: str, verbose: bool) -> None:
 
 # ── Cookie helpers ───────────────────────────────────────────────────
 
+
 def build_cookie_header(cookies: list[dict]) -> str:
     """Build Cookie header string from extracted cookie dicts."""
     return "; ".join(
-        f"{c['name']}={c['value']}"
-        for c in cookies
-        if c.get("value") and c.get("name")
+        f"{c['name']}={c['value']}" for c in cookies if c.get("value") and c.get("name")
     )
 
 
@@ -103,6 +102,7 @@ def _base_headers(cookie_header: str) -> dict:
 
 
 # ── Auth ─────────────────────────────────────────────────────────────
+
 
 async def get_access_token(
     cookies: list[dict],
@@ -137,7 +137,10 @@ async def get_access_token(
             access_token = data.get("accessToken")
 
             if not access_token:
-                _log(f"auth: no accessToken in response. Keys: {list(data.keys())}", verbose)
+                _log(
+                    f"auth: no accessToken in response. Keys: {list(data.keys())}",
+                    verbose,
+                )
                 return {
                     "success": False,
                     "error": "No accessToken in session response. Cookies may be expired.",
@@ -177,21 +180,22 @@ def _pow_parse_time() -> str:
 def _pow_config(user_agent: str) -> list:
     """Build a config array mimicking browser environment fingerprint."""
     return [
-        random.choice(_POW_SCREENS),       # screen width+height
-        _pow_parse_time(),                  # JS-style timestamp
-        4294705152,                         # performance constant
-        0,                                  # counter slot (replaced per iteration)
-        user_agent,                         # navigator.userAgent
-        "",                                 # cached script hash (optional)
-        "",                                 # deployment ID (optional)
-        "en-US",                            # navigator.language
-        "en-US,en;q=0.9",                   # navigator.languages
-        0,                                  # counter slot 2 (replaced per iteration)
-        random.choice(_POW_CORES),          # hardwareConcurrency
-        time.perf_counter() * 1000,         # performance.now()
-        str(uuid.uuid4()),                  # random UUID
-        "",                                 # additional fingerprint (optional)
-        time.time() * 1000 - (time.perf_counter() * 1000),  # Date.now() - performance.now()
+        random.choice(_POW_SCREENS),  # screen width+height
+        _pow_parse_time(),  # JS-style timestamp
+        4294705152,  # performance constant
+        0,  # counter slot (replaced per iteration)
+        user_agent,  # navigator.userAgent
+        "",  # cached script hash (optional)
+        "",  # deployment ID (optional)
+        "en-US",  # navigator.language
+        "en-US,en;q=0.9",  # navigator.languages
+        0,  # counter slot 2 (replaced per iteration)
+        random.choice(_POW_CORES),  # hardwareConcurrency
+        time.perf_counter() * 1000,  # performance.now()
+        str(uuid.uuid4()),  # random UUID
+        "",  # additional fingerprint (optional)
+        time.time() * 1000
+        - (time.perf_counter() * 1000),  # Date.now() - performance.now()
     ]
 
 
@@ -229,9 +233,17 @@ def solve_proof_of_work(
 
     # Pre-build static parts of the JSON config for speed.
     # config has 15 elements: slots 3 and 9 are dynamic counters.
-    part1 = (json.dumps(config[:3], separators=(',', ':'), ensure_ascii=False)[:-1] + ',').encode()
-    part2 = (',' + json.dumps(config[4:9], separators=(',', ':'), ensure_ascii=False)[1:-1] + ',').encode()
-    part3 = (',' + json.dumps(config[10:], separators=(',', ':'), ensure_ascii=False)[1:]).encode()
+    part1 = (
+        json.dumps(config[:3], separators=(",", ":"), ensure_ascii=False)[:-1] + ","
+    ).encode()
+    part2 = (
+        ","
+        + json.dumps(config[4:9], separators=(",", ":"), ensure_ascii=False)[1:-1]
+        + ","
+    ).encode()
+    part3 = (
+        "," + json.dumps(config[10:], separators=(",", ":"), ensure_ascii=False)[1:]
+    ).encode()
 
     for i in range(_POW_MAX_ITERATIONS):
         # Inject iteration counter into config slots 3 and 9
@@ -251,6 +263,7 @@ def solve_proof_of_work(
 
 
 # ── Chat requirements (anti-bot sentinel) ────────────────────────────
+
 
 async def get_chat_requirements(
     access_token: str,
@@ -285,7 +298,10 @@ async def get_chat_requirements(
                 return {"success": False, "status_code": resp.status_code}
 
             data = resp.json()
-            _log(f"sentinel: persona={data.get('persona')}, pow_required={data.get('proofofwork', {}).get('required')}", verbose)
+            _log(
+                f"sentinel: persona={data.get('persona')}, pow_required={data.get('proofofwork', {}).get('required')}",
+                verbose,
+            )
             return {
                 "success": True,
                 "token": data.get("token"),
@@ -299,6 +315,7 @@ async def get_chat_requirements(
 
 
 # ── Conversation ─────────────────────────────────────────────────────
+
 
 async def prompt_chatgpt_api(
     prompt: str,
@@ -346,14 +363,16 @@ async def prompt_chatgpt_api(
     model_slug = API_MODEL_SLUGS.get(model, model)
     payload = {
         "action": "next",
-        "messages": [{
-            "id": message_id,
-            "author": {"role": "user"},
-            "content": {
-                "content_type": "text",
-                "parts": [prompt],
-            },
-        }],
+        "messages": [
+            {
+                "id": message_id,
+                "author": {"role": "user"},
+                "content": {
+                    "content_type": "text",
+                    "parts": [prompt],
+                },
+            }
+        ],
         "model": model_slug,
         "parent_message_id": parent_message_id,
         "timezone_offset_min": -480,
@@ -464,7 +483,11 @@ async def prompt_chatgpt_api(
                     # Check for error in event
                     if event.get("error"):
                         error_info = event["error"]
-                        error_msg = error_info if isinstance(error_info, str) else json.dumps(error_info)
+                        error_msg = (
+                            error_info
+                            if isinstance(error_info, str)
+                            else json.dumps(error_info)
+                        )
                         return {
                             "success": False,
                             "error": f"ChatGPT error: {error_msg}",
@@ -518,6 +541,7 @@ async def prompt_chatgpt_api(
 
 
 # ── High-level orchestrator ──────────────────────────────────────────
+
 
 async def chatgpt_api_prompt(
     prompt: str,
@@ -578,7 +602,10 @@ async def chatgpt_api_prompt(
         if pow_info and pow_info.get("required"):
             seed = pow_info.get("seed", "")
             difficulty = pow_info.get("difficulty", "")
-            _log(f"pow: solving challenge (seed={seed[:16]}..., difficulty={difficulty})", verbose)
+            _log(
+                f"pow: solving challenge (seed={seed[:16]}..., difficulty={difficulty})",
+                verbose,
+            )
             proof_token = solve_proof_of_work(seed, difficulty, verbose=verbose)
             if not proof_token:
                 _log("pow: failed to solve, API mode may fail with 403", verbose)

@@ -1,3 +1,0 @@
-[lint.per-file-ignores]
-# sys.path manipulation must precede local imports
-"scripts/chatgpt.py" = ["E402"]

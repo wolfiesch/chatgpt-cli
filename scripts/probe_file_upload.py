@@ -7,6 +7,7 @@ and determines the best CDP approach for file upload.
 Usage:
     python3 scripts/run.py probe_file_upload.py
 """
+
 import asyncio
 import json
 import sys
@@ -15,8 +16,10 @@ import nodriver as uc
 from nodriver import cdp
 
 from config import (
-    USER_DATA_DIR, BROWSER_ARGS,
-    CHATGPT_URL, CHATGPT_COOKIE_DOMAINS,
+    USER_DATA_DIR,
+    BROWSER_ARGS,
+    CHATGPT_URL,
+    CHATGPT_COOKIE_DOMAINS,
     clean_browser_locks,
 )
 from chrome_cookies import extract_cookies as extract_chrome_cookies
@@ -31,7 +34,7 @@ async def _cdp_run_js(page, expression: str):
         if result and result.object_id:
             props, _ = await page.send(
                 cdp.runtime.call_function_on(
-                    'function() { return JSON.stringify(this); }',
+                    "function() { return JSON.stringify(this); }",
                     object_id=result.object_id,
                     return_by_value=True,
                 )
@@ -48,15 +51,25 @@ async def _cdp_click(page, x, y):
     """Full CDP mouse click sequence."""
     await page.send(cdp.input_.dispatch_mouse_event(type_="mouseMoved", x=x, y=y))
     await asyncio.sleep(0.05)
-    await page.send(cdp.input_.dispatch_mouse_event(
-        type_="mousePressed", x=x, y=y,
-        button=cdp.input_.MouseButton("left"), click_count=1
-    ))
+    await page.send(
+        cdp.input_.dispatch_mouse_event(
+            type_="mousePressed",
+            x=x,
+            y=y,
+            button=cdp.input_.MouseButton("left"),
+            click_count=1,
+        )
+    )
     await asyncio.sleep(0.05)
-    await page.send(cdp.input_.dispatch_mouse_event(
-        type_="mouseReleased", x=x, y=y,
-        button=cdp.input_.MouseButton("left"), click_count=1
-    ))
+    await page.send(
+        cdp.input_.dispatch_mouse_event(
+            type_="mouseReleased",
+            x=x,
+            y=y,
+            button=cdp.input_.MouseButton("left"),
+            click_count=1,
+        )
+    )
 
 
 async def main():
@@ -80,8 +93,10 @@ async def main():
     for c in cookies:
         try:
             params = {
-                "name": c["name"], "value": c["value"],
-                "domain": c["domain"], "path": c.get("path", "/"),
+                "name": c["name"],
+                "value": c["value"],
+                "domain": c["domain"],
+                "path": c.get("path", "/"),
             }
             if c.get("secure"):
                 params["secure"] = True
@@ -104,7 +119,9 @@ async def main():
 
     # ── Step 1: Find ALL <input type="file"> elements ──────────────────
     print("\n--- Step 1: All <input type='file'> elements ---")
-    file_inputs = await _cdp_run_js(page, '''(() => {
+    file_inputs = await _cdp_run_js(
+        page,
+        """(() => {
         const results = [];
         const inputs = document.querySelectorAll('input[type="file"]');
         for (const inp of inputs) {
@@ -138,25 +155,32 @@ async def main():
             });
         }
         return results;
-    })()''')
+    })()""",
+    )
 
     if file_inputs:
         for i, inp in enumerate(file_inputs):
             print(f"\n  Input #{i}:")
             print(f"    id='{inp['id']}' name='{inp['name']}'")
             print(f"    accept='{inp['accept']}' multiple={inp['multiple']}")
-            print(f"    hidden={inp['hidden']} display='{inp['style_display']}' visibility='{inp['style_visibility']}'")
+            print(
+                f"    hidden={inp['hidden']} display='{inp['style_display']}' visibility='{inp['style_visibility']}'"
+            )
             print(f"    testid='{inp['testid']}' ariaLabel='{inp['ariaLabel']}'")
             print(f"    class='{inp['className']}'")
             print(f"    rect: {inp['rect']}")
-            print(f"    parent: <{inp['parentTag']}> testid='{inp['parentTestid']}' class='{inp['parentClass']}'")
+            print(
+                f"    parent: <{inp['parentTag']}> testid='{inp['parentTestid']}' class='{inp['parentClass']}'"
+            )
             print(f"    parentRect: {inp['parentRect']}")
     else:
         print("  No <input type='file'> elements found on initial page load!")
 
     # ── Step 2: Find the '+' / attach button ──────────────────────────
     print("\n--- Step 2: Composer attachment buttons ---")
-    attach_btns = await _cdp_run_js(page, '''(() => {
+    attach_btns = await _cdp_run_js(
+        page,
+        """(() => {
         const results = [];
         // Look for known attachment-related buttons
         const selectors = [
@@ -190,20 +214,25 @@ async def main():
             }
         }
         return results;
-    })()''')
+    })()""",
+    )
 
     if attach_btns:
         for btn in attach_btns:
-            print(f"  <{btn['tag']}> testid='{btn['testid']}' "
-                  f"aria='{btn['ariaLabel']}' text='{btn['text']}' "
-                  f"at ({btn['x']},{btn['y']}) size={btn['w']}x{btn['h']}")
+            print(
+                f"  <{btn['tag']}> testid='{btn['testid']}' "
+                f"aria='{btn['ariaLabel']}' text='{btn['text']}' "
+                f"at ({btn['x']},{btn['y']}) size={btn['w']}x{btn['h']}"
+            )
     else:
         print("  No attachment buttons found!")
 
     # ── Step 3: Click the '+' / attach button and inspect menu ────────
     print("\n--- Step 3: Click attach button → inspect menu ---")
     # Find the best attach button
-    plus_btn = await _cdp_run_js(page, '''(() => {
+    plus_btn = await _cdp_run_js(
+        page,
+        """(() => {
         // Try known selectors in priority order
         const selectors = [
             '[data-testid="composer-plus-btn"]',
@@ -223,15 +252,18 @@ async def main():
             }
         }
         return null;
-    })()''')
+    })()""",
+    )
 
     if plus_btn:
         print(f"  Clicking: {plus_btn['testid']} at ({plus_btn['x']}, {plus_btn['y']})")
-        await _cdp_click(page, plus_btn['x'], plus_btn['y'])
+        await _cdp_click(page, plus_btn["x"], plus_btn["y"])
         await asyncio.sleep(1.5)
 
         # Check what menu appeared
-        menu_items = await _cdp_run_js(page, '''(() => {
+        menu_items = await _cdp_run_js(
+            page,
+            """(() => {
             const results = [];
             // Check for popover/menu/dropdown
             const containers = document.querySelectorAll(
@@ -270,21 +302,28 @@ async def main():
                 });
             }
             return results;
-        })()''')
+        })()""",
+        )
 
         if menu_items:
             for mi, menu in enumerate(menu_items):
-                print(f"\n  Container {mi}: role={menu['role']} testid={menu['testid']} "
-                      f"size={menu['w']}x{menu['h']}")
-                for j, item in enumerate(menu.get('items', [])):
-                    print(f"    [{j}] <{item['tag']}> testid='{item['testid']}' "
-                          f"aria='{item['ariaLabel']}' text='{item['text'][:60]}' "
-                          f"at ({item['x']},{item['y']})")
+                print(
+                    f"\n  Container {mi}: role={menu['role']} testid={menu['testid']} "
+                    f"size={menu['w']}x{menu['h']}"
+                )
+                for j, item in enumerate(menu.get("items", [])):
+                    print(
+                        f"    [{j}] <{item['tag']}> testid='{item['testid']}' "
+                        f"aria='{item['ariaLabel']}' text='{item['text'][:60]}' "
+                        f"at ({item['x']},{item['y']})"
+                    )
         else:
             print("  No menu/popover appeared!")
 
         # Check if new file inputs appeared after clicking
-        new_file_inputs = await _cdp_run_js(page, '''(() => {
+        new_file_inputs = await _cdp_run_js(
+            page,
+            """(() => {
             const inputs = document.querySelectorAll('input[type="file"]');
             const results = [];
             for (const inp of inputs) {
@@ -296,17 +335,22 @@ async def main():
                 });
             }
             return results;
-        })()''')
+        })()""",
+        )
         print(f"\n  File inputs after click: {len(new_file_inputs or [])}")
-        for inp in (new_file_inputs or []):
-            print(f"    id='{inp['id']}' accept='{inp['accept']}' "
-                  f"multiple={inp['multiple']} testid='{inp['testid']}'")
+        for inp in new_file_inputs or []:
+            print(
+                f"    id='{inp['id']}' accept='{inp['accept']}' "
+                f"multiple={inp['multiple']} testid='{inp['testid']}'"
+            )
     else:
         print("  No attach button found to click!")
 
     # ── Step 4: Check drag-and-drop zone ──────────────────────────────
     print("\n--- Step 4: Drag-and-drop zones ---")
-    dnd_zones = await _cdp_run_js(page, '''(() => {
+    dnd_zones = await _cdp_run_js(
+        page,
+        """(() => {
         const results = [];
         // Look for elements with dragover/drop event listeners or dropzone attribute
         const candidates = document.querySelectorAll(
@@ -327,13 +371,16 @@ async def main():
             });
         }
         return results;
-    })()''')
+    })()""",
+    )
 
     if dnd_zones:
         for z in dnd_zones:
-            print(f"  <{z['tag']}> testid='{z['testid']}' "
-                  f"class='{z['class'][:60]}' dropzone='{z['dropzone']}' "
-                  f"size={z['w']}x{z['h']}")
+            print(
+                f"  <{z['tag']}> testid='{z['testid']}' "
+                f"class='{z['class'][:60]}' dropzone='{z['dropzone']}' "
+                f"size={z['w']}x{z['h']}"
+            )
     else:
         print("  No obvious drag-and-drop zones found")
 
@@ -346,10 +393,15 @@ async def main():
         print(f"  Screenshot error: {e}")
 
     # Close menu
-    await page.send(cdp.input_.dispatch_key_event(
-        type_="keyDown", key="Escape", code="Escape",
-        windows_virtual_key_code=27, native_virtual_key_code=27,
-    ))
+    await page.send(
+        cdp.input_.dispatch_key_event(
+            type_="keyDown",
+            key="Escape",
+            code="Escape",
+            windows_virtual_key_code=27,
+            native_virtual_key_code=27,
+        )
+    )
     await asyncio.sleep(0.5)
 
     # ── Step 5: Try CDP DOM approach to find file input nodes ─────────
