@@ -197,6 +197,7 @@ Options:
   --temp-chat        Temporary chat mode (not saved to history)
   --session-id       Unique ID for concurrent queries
   --limit N          Max chats to list (default: 50)
+  --engine ENGINE    Browser engine: nodriver (default) or camoufox
   --verbose, -v      Enable debug logging to stderr
 ```
 

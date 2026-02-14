@@ -284,6 +284,7 @@ Options:
   --no-search        Disable web search for this prompt
   --session-id       Unique ID for concurrent queries
   --limit N          Max chats to list (default: 50, for --list-chats)
+  --engine ENGINE    Browser engine: nodriver (default) or camoufox
   --verbose, -v      Enable debug logging to stderr
 ```
 
@@ -443,10 +444,10 @@ DEFAULT_TIMEOUT=300        # Response timeout (seconds)
 
 ## How It Works
 
-1. **Cookie Extraction**: Reads ChatGPT cookies from Chrome's database
+1. **Cookie Extraction**: Reads ChatGPT cookies from Chrome's database (shared extractor at `~/.claude/skills/shared/chrome_cookies.py`)
 2. **Decryption**: Decrypts encrypted cookie values using macOS Keychain
-3. **Stealth Browser**: Launches nodriver (undetected Chrome)
-4. **Cookie Injection**: Sets cookies via Chrome DevTools Protocol
+3. **Stealth Browser**: Launches via shared engine abstraction (`~/.claude/skills/shared/browser_engine.py`) — nodriver (Chromium, default) or camoufox (Firefox + fingerprint spoofing) via `--engine` flag
+4. **Cookie Injection**: Sets cookies via CDP (nodriver) or Playwright context (camoufox)
 5. **Navigation**: Opens ChatGPT (or navigates to existing chat for `--continue-chat`)
 6. **Model Selection**: Selects model via `data-testid`-based CDP mouse events (React requires full `mouseMoved → mousePressed → mouseReleased` sequence)
 7. **File Upload** (if `--file`/`--image`): Intercepts file chooser via CDP, triggers ⌘U shortcut, sets files on the exact input element React opened via `DOM.setFileInputFiles` with `backend_node_id`

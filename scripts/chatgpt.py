@@ -14,8 +14,8 @@ import sys
 import time
 from pathlib import Path
 
-import nodriver as uc
-from nodriver import cdp
+sys.path.insert(0, str(Path.home() / ".claude/skills/shared"))
+from browser_engine import create_engine, add_engine_argument, BrowserEngine
 
 
 def _log(msg: str, verbose: bool) -> None:
@@ -44,37 +44,8 @@ from config import (
     DEFAULT_MODEL, MODEL_TIMEOUTS,
     CHATGPT_SIDEBAR_SELECTORS, CHATGPT_CHAT_MESSAGE_SELECTORS, CHATGPT_CHAT_URL,
     POLL_INTERVAL, STABILITY_THRESHOLD,
-    clean_browser_locks,
 )
 from chrome_cookies import extract_cookies as extract_chrome_cookies
-
-
-async def _cdp_eval(page, expression: str):
-    """Run JavaScript on page via CDP Runtime.evaluate.
-
-    nodriver's page.evaluate() silently returns None on chatgpt.com
-    due to execution context issues. This uses the CDP protocol directly
-    which works reliably. The expression is sent to the browser's existing
-    JS context - not Python eval().
-    """
-    try:
-        result, _exceptions = await page.send(cdp.runtime.evaluate(expression))
-        if result and result.value is not None:
-            return result.value
-        # For complex objects (arrays, objects), serialize via JSON
-        if result and result.object_id:
-            props, _ = await page.send(
-                cdp.runtime.call_function_on(
-                    'function() { return JSON.stringify(this); }',
-                    object_id=result.object_id,
-                    return_by_value=True,
-                )
-            )
-            if props and props.value:
-                return json.loads(props.value)
-        return None
-    except Exception:
-        return None
 
 
 # ── Shared browser setup ──────────────────────────────────────────────
@@ -85,22 +56,23 @@ async def _setup_authenticated_browser(
     session_id: str | None = None,
     screenshot: str | None = None,
     verbose: bool = False,
+    engine_name: str = "nodriver",
 ) -> dict:
     """
-    Shared browser setup: cookie extraction, browser launch, cookie injection,
+    Shared browser setup: cookie extraction, engine launch, cookie injection,
     navigation to ChatGPT, auth check, and modal dismissal.
 
-    On success, returns a dict with browser/page/injected.
-    The caller is responsible for calling browser.stop() when done.
+    On success, returns a dict with engine/injected.
+    The caller is responsible for calling engine.stop() when done.
 
-    On failure, the browser is stopped internally before returning.
+    On failure, the engine is stopped internally before returning.
     """
     if headless is None:
         headless = HEADLESS
     if show_browser:
         headless = False
 
-    _log(f"setup: headless={headless}", verbose)
+    _log(f"setup: headless={headless} engine={engine_name}", verbose)
 
     # Extract cookies from Chrome
     result = extract_chrome_cookies(CHATGPT_COOKIE_DOMAINS, decrypt=True)
@@ -125,69 +97,32 @@ async def _setup_authenticated_browser(
     else:
         browser_profile = USER_DATA_DIR
 
-    # Clean stale browser locks from crashed sessions
-    clean_browser_locks()
-
-    # Start stealth browser
-    browser = await uc.start(
+    # Create and start engine
+    engine = create_engine(engine_name)
+    await engine.start(
         headless=headless,
         user_data_dir=str(browser_profile),
-        browser_args=BROWSER_ARGS
+        browser_args=BROWSER_ARGS,
     )
 
     # Navigate to ChatGPT first to set domain for cookies
-    page = await browser.get(CHATGPT_URL)
-    await page.sleep(1)
+    await engine.goto(CHATGPT_URL)
+    await engine.sleep(1)
 
-    # Inject cookies via CDP
-    injected = 0
-    for c in cookies:
-        if not c.get("value") or not c.get("name"):
-            continue
-        try:
-            same_site = None
-            if c.get("same_site") in ["Strict", "Lax", "None"]:
-                same_site = cdp.network.CookieSameSite(c["same_site"])
-
-            name = c["name"]
-            domain = c.get("domain", "")
-            cookie_domain = domain.lstrip(".")
-
-            # __Host- cookies must NOT have a domain attribute set
-            if name.startswith("__Host-"):
-                protocol = "https" if c.get("secure", False) else "http"
-                cookie_url = f"{protocol}://{cookie_domain}{c.get('path', '/')}"
-                param = cdp.network.CookieParam(
-                    name=name, value=c["value"], url=cookie_url,
-                    path="/", secure=True,
-                    http_only=c.get("http_only", False),
-                    same_site=same_site,
-                )
-            else:
-                param = cdp.network.CookieParam(
-                    name=name, value=c["value"], domain=domain,
-                    path=c.get("path", "/"),
-                    secure=c.get("secure", False),
-                    http_only=c.get("http_only", False),
-                    same_site=same_site,
-                )
-            await browser.connection.send(cdp.storage.set_cookies([param]))
-            injected += 1
-        except Exception:
-            pass
-
+    # Inject cookies via engine abstraction
+    injected = await engine.inject_cookies(cookies)
     _log(f"setup: {injected}/{len(cookies)} cookies injected", verbose)
 
     # Reload with cookies
-    page = await browser.get(CHATGPT_URL)
-    await page.sleep(3)
+    await engine.goto(CHATGPT_URL)
+    await engine.sleep(3)
 
     # Check authentication
-    is_auth, auth_error = await check_auth_status(page)
+    is_auth, auth_error = await check_auth_status(engine)
     if not is_auth:
         if screenshot:
-            await page.save_screenshot(screenshot)
-        browser.stop()
+            await engine.screenshot(screenshot)
+        await engine.stop()
         return {
             "success": False,
             "error": f"{auth_error} (injected {injected}/{len(cookies)} cookies)",
@@ -195,32 +130,31 @@ async def _setup_authenticated_browser(
         }
 
     # Dismiss any modal dialogs
-    await _cdp_eval(page, '''(() => {
+    await engine.run_js('''(() => {
         document.dispatchEvent(new KeyboardEvent('keydown', {
             key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true
         }));
     })()''')
-    await page.sleep(0.5)
+    await engine.sleep(0.5)
 
     return {
         "success": True,
-        "browser": browser,
-        "page": page,
+        "engine": engine,
         "injected": injected,
     }
 
 
 # ── Auth check ────────────────────────────────────────────────────────
 
-async def check_auth_status(page) -> tuple[bool, str]:
+async def check_auth_status(engine: BrowserEngine) -> tuple[bool, str]:
     """
     Check if user is authenticated on ChatGPT.
 
     Returns:
         tuple: (is_authenticated, error_message)
     """
-    current_url = page.url
-    page_text = await _cdp_eval(page, 'document.body.innerText') or ""
+    current_url = engine.page_url
+    page_text = await engine.run_js('document.body.innerText') or ""
 
     if "/auth/login" in current_url or "login" in current_url.lower():
         return False, "Redirected to login page. Please log into ChatGPT in Chrome first."
@@ -231,7 +165,7 @@ async def check_auth_status(page) -> tuple[bool, str]:
     if "welcome back" in page_text.lower():
         return False, "Login modal detected. Cookie injection may have failed."
 
-    has_login_button = await _cdp_eval(page, '''(() => {
+    has_login_button = await engine.run_js('''(() => {
         const buttons = document.querySelectorAll('button, a');
         for (const btn of buttons) {
             const text = (btn.innerText || btn.textContent || '').trim().toLowerCase();
@@ -256,28 +190,12 @@ async def check_auth_status(page) -> tuple[bool, str]:
 
 # ── Prompt helpers ────────────────────────────────────────────────────
 
-async def _cdp_click(page, x: float, y: float) -> None:
-    """Dispatch a real CDP mouse click at coordinates (x, y).
-
-    Sends mouseMoved → mousePressed → mouseReleased, which is the full
-    sequence React's synthetic event system needs to register a click.
-    """
-    await page.send(cdp.input_.dispatch_mouse_event(type_="mouseMoved", x=x, y=y))
-    await page.sleep(0.1)
-    await page.send(cdp.input_.dispatch_mouse_event(
-        type_="mousePressed", x=x, y=y,
-        button=cdp.input_.MouseButton.LEFT, click_count=1,
-    ))
-    await page.sleep(0.05)
-    await page.send(cdp.input_.dispatch_mouse_event(
-        type_="mouseReleased", x=x, y=y,
-        button=cdp.input_.MouseButton.LEFT, click_count=1,
-    ))
 
 
-async def _get_element_center(page, testid: str) -> dict | None:
+
+async def _get_element_center(engine: BrowserEngine, testid: str) -> dict | None:
     """Get the center coordinates of an element by data-testid."""
-    return await _cdp_eval(page, f'''(() => {{
+    return await engine.run_js(f'''(() => {{
         const el = document.querySelector('[data-testid="{testid}"]');
         if (!el) return null;
         const r = el.getBoundingClientRect();
@@ -286,7 +204,7 @@ async def _get_element_center(page, testid: str) -> dict | None:
     }})()''')
 
 
-async def select_model(page, model: str, verbose: bool = False) -> bool:
+async def select_model(engine: BrowserEngine, model: str, verbose: bool = False) -> bool:
     """Select the specified model in ChatGPT's model dropdown.
 
     Uses data-testid attributes for reliable element targeting, and raw
@@ -307,17 +225,17 @@ async def select_model(page, model: str, verbose: bool = False) -> bool:
 
     try:
         # Step 1: Open model dropdown via CDP mouse click on the button
-        btn_coords = await _get_element_center(page, "model-switcher-dropdown-button")
+        btn_coords = await _get_element_center(engine, "model-switcher-dropdown-button")
         if not btn_coords:
             _log("select_model: could not find model selector button", verbose)
             return False
 
         _log(f"select_model: clicking dropdown button at ({btn_coords['x']:.0f},{btn_coords['y']:.0f})", verbose)
-        await _cdp_click(page, btn_coords['x'], btn_coords['y'])
-        await page.sleep(1.5)
+        await engine.mouse_click(btn_coords['x'], btn_coords['y'])
+        await engine.sleep(1.5)
 
         # Verify dropdown opened
-        is_open = await _cdp_eval(page, '''(() => {
+        is_open = await engine.run_js('''(() => {
             const btn = document.querySelector('[data-testid="model-switcher-dropdown-button"]');
             return btn && btn.getAttribute('aria-expanded') === 'true';
         })()''')
@@ -327,34 +245,31 @@ async def select_model(page, model: str, verbose: bool = False) -> bool:
 
         # Step 2: If legacy model, open the Legacy submenu first
         if is_legacy:
-            legacy_coords = await _get_element_center(page, CHATGPT_LEGACY_SUBMENU_TESTID)
+            legacy_coords = await _get_element_center(engine, CHATGPT_LEGACY_SUBMENU_TESTID)
             if not legacy_coords:
                 _log("select_model: could not find Legacy models submenu", verbose)
                 return False
             _log(f"select_model: opening Legacy submenu at ({legacy_coords['x']:.0f},{legacy_coords['y']:.0f})", verbose)
-            await _cdp_click(page, legacy_coords['x'], legacy_coords['y'])
-            await page.sleep(1)
+            await engine.mouse_click(legacy_coords['x'], legacy_coords['y'])
+            await engine.sleep(1)
 
         # Step 3: Click the target model option by testid
-        item_coords = await _get_element_center(page, target_testid)
+        item_coords = await _get_element_center(engine, target_testid)
         if not item_coords:
             _log(f"select_model: could not find testid '{target_testid}' in dropdown", verbose)
             # Close dropdown
             try:
-                await page.send(cdp.input_.dispatch_key_event(
-                    type_="keyDown", key="Escape", code="Escape",
-                    windows_virtual_key_code=27, native_virtual_key_code=27,
-                ))
+                await engine.key_press("Escape")
             except Exception:
                 pass
             return False
 
         _log(f"select_model: clicking '{item_coords.get('text', '?')}' at ({item_coords['x']:.0f},{item_coords['y']:.0f})", verbose)
-        await _cdp_click(page, item_coords['x'], item_coords['y'])
-        await page.sleep(1)
+        await engine.mouse_click(item_coords['x'], item_coords['y'])
+        await engine.sleep(1)
 
         # Step 4: Verify model switched by checking button text
-        new_text = await _cdp_eval(page, '''(() => {
+        new_text = await engine.run_js('''(() => {
             const btn = document.querySelector('[data-testid="model-switcher-dropdown-button"]');
             return btn ? btn.innerText.trim() : '';
         })()''')
@@ -368,14 +283,14 @@ async def select_model(page, model: str, verbose: bool = False) -> bool:
     return False
 
 
-async def ensure_new_chat(page, verbose: bool = False) -> bool:
+async def ensure_new_chat(engine: BrowserEngine, verbose: bool = False) -> bool:
     """Force navigation to a fresh/new chat.
 
     Tries clicking the 'New chat' button in the sidebar first,
     then falls back to navigating to the base ChatGPT URL.
     """
     # Strategy 1: Click the new chat button
-    clicked = await _cdp_eval(page, '''(() => {
+    clicked = await engine.run_js('''(() => {
         // Look for "New chat" link/button in sidebar
         const links = document.querySelectorAll('a, button');
         for (const el of links) {
@@ -393,17 +308,17 @@ async def ensure_new_chat(page, verbose: bool = False) -> bool:
 
     if clicked:
         _log("ensure_new_chat: clicked New Chat button", verbose)
-        await page.sleep(2)
+        await engine.sleep(2)
         return True
 
     # Strategy 2: Navigate to base URL
     _log("ensure_new_chat: no button found, navigating to base URL", verbose)
-    await page.send(cdp.page.navigate(url=CHATGPT_URL))
-    await page.sleep(3)
+    await engine.goto(CHATGPT_URL)
+    await engine.sleep(3)
     return True
 
 
-async def input_prompt(page, prompt: str) -> bool:
+async def input_prompt(engine: BrowserEngine, prompt: str) -> bool:
     """
     Input the prompt into ChatGPT's text field.
     ChatGPT uses ProseMirror - a contenteditable div, not a standard textarea.
@@ -411,7 +326,7 @@ async def input_prompt(page, prompt: str) -> bool:
     input_element = None
     for selector in CHATGPT_INPUT_SELECTORS:
         try:
-            input_element = await page.select(selector, timeout=3)
+            input_element = await engine.select(selector, timeout=3)
             if input_element:
                 break
         except Exception:
@@ -419,13 +334,13 @@ async def input_prompt(page, prompt: str) -> bool:
 
     if not input_element:
         try:
-            input_element = await page.select('div[contenteditable="true"]', timeout=3)
+            input_element = await engine.select('div[contenteditable="true"]', timeout=3)
         except Exception:
             pass
 
     if not input_element:
         try:
-            found = await _cdp_eval(page, '''(() => {
+            found = await engine.run_js('''(() => {
                 let el = document.getElementById('prompt-textarea');
                 if (el) { el.focus(); return true; }
                 el = document.querySelector('.ProseMirror');
@@ -435,7 +350,7 @@ async def input_prompt(page, prompt: str) -> bool:
                 return false;
             })()''')
             if found:
-                input_element = await page.select(':focus', timeout=2)
+                input_element = await engine.select(':focus', timeout=2)
         except Exception:
             pass
 
@@ -443,7 +358,7 @@ async def input_prompt(page, prompt: str) -> bool:
         return False
 
     await input_element.click()
-    await page.sleep(0.3)
+    await engine.sleep(0.3)
 
     escaped_prompt = (prompt
         .replace('\\', '\\\\')
@@ -453,7 +368,7 @@ async def input_prompt(page, prompt: str) -> bool:
         .replace('\r', '\\r')
         .replace('\t', '\\t'))
 
-    success = await _cdp_eval(page, f'''(() => {{
+    success = await engine.run_js(f'''(() => {{
         const prompt = `{escaped_prompt}`;
         const el = document.activeElement;
         if (!el) return false;
@@ -480,24 +395,27 @@ async def input_prompt(page, prompt: str) -> bool:
     }})()''')
 
     if not success:
-        await input_element.send_keys(prompt)
+        try:
+            await input_element.send_keys(prompt)
+        except AttributeError:
+            await input_element.type(prompt)
 
-    await page.sleep(0.5)
+    await engine.sleep(0.5)
     return True
 
 
-async def send_prompt(page) -> bool:
+async def send_prompt(engine: BrowserEngine) -> bool:
     """Click the send button to submit the prompt."""
     for selector in CHATGPT_SEND_SELECTORS:
         try:
-            btn = await page.select(selector, timeout=2)
+            btn = await engine.select(selector, timeout=2)
             if btn:
                 await btn.click()
                 return True
         except Exception:
             continue
 
-    sent = await _cdp_eval(page, '''(() => {
+    sent = await engine.run_js('''(() => {
         const buttons = document.querySelectorAll('button');
         for (const btn of buttons) {
             const label = btn.getAttribute('aria-label') || '';
@@ -516,9 +434,12 @@ async def send_prompt(page) -> bool:
         return True
 
     try:
-        focused = await page.select(':focus', timeout=1)
+        focused = await engine.select(':focus', timeout=1)
         if focused:
-            await focused.send_keys('\n')
+            try:
+                await focused.send_keys('\n')
+            except AttributeError:
+                await focused.type('\n')
             return True
     except Exception:
         pass
@@ -527,7 +448,7 @@ async def send_prompt(page) -> bool:
 
 
 async def _upload_attachments(
-    page,
+    engine: BrowserEngine,
     file_paths: list[str],
     verbose: bool = False,
 ) -> dict:
@@ -554,131 +475,132 @@ async def _upload_attachments(
     abs_paths = [str(Path(p).resolve()) for p in file_paths]
     _log(f"upload: attaching {len(abs_paths)} file(s): {abs_paths}", verbose)
 
-    # Future to track when the file chooser has been handled
-    loop = asyncio.get_event_loop()
-    chooser_future: asyncio.Future[bool] = loop.create_future()
+    if engine.has_cdp:
+        # ── CDP path (nodriver): intercept file chooser + DOM.setFileInputFiles ──
+        from nodriver import cdp as _cdp
+        raw_page = engine.get_raw_page()
 
-    async def _on_file_chooser(event: cdp.page.FileChooserOpened):
-        """CDP event handler: fires when file chooser opens.
+        loop = asyncio.get_event_loop()
+        chooser_future: asyncio.Future[bool] = loop.create_future()
 
-        Uses DOM.setFileInputFiles with the backend_node_id from the event
-        to set files on the exact input element React opened the chooser for.
-        Page.handleFileChooser was removed from Chrome, so we use this approach.
-        """
-        _log(
-            f"upload: fileChooserOpened — mode={event.mode} "
-            f"backend_node_id={event.backend_node_id}",
-            verbose,
-        )
-        try:
-            # Disable interception first so the pending chooser is dismissed
-            await page.send(
-                cdp.page.set_intercept_file_chooser_dialog(enabled=False)
+        async def _on_file_chooser(event: _cdp.page.FileChooserOpened):
+            _log(
+                f"upload: fileChooserOpened — mode={event.mode} "
+                f"backend_node_id={event.backend_node_id}",
+                verbose,
             )
-            _log("upload: interception disabled, setting files via DOM", verbose)
+            try:
+                await raw_page.send(
+                    _cdp.page.set_intercept_file_chooser_dialog(enabled=False)
+                )
+                await raw_page.send(_cdp.dom.set_file_input_files(
+                    files=abs_paths,
+                    backend_node_id=event.backend_node_id,
+                ))
+                _log("upload: DOM.setFileInputFiles succeeded", verbose)
+                if not chooser_future.done():
+                    chooser_future.set_result(True)
+            except Exception as e:
+                _log(f"upload: setFileInputFiles error — {e}", verbose)
+                if not chooser_future.done():
+                    chooser_future.set_result(False)
 
-            # Set files directly on the input using its backend_node_id.
-            # DOM.setFileInputFiles dispatches native browser events which
-            # React's capture-phase listeners will pick up.
-            await page.send(cdp.dom.set_file_input_files(
-                files=abs_paths,
-                backend_node_id=event.backend_node_id,
-            ))
-            _log("upload: DOM.setFileInputFiles succeeded", verbose)
-            if not chooser_future.done():
-                chooser_future.set_result(True)
-        except Exception as e:
-            _log(f"upload: setFileInputFiles error — {e}", verbose)
-            if not chooser_future.done():
-                chooser_future.set_result(False)
-
-    try:
-        # Register event handler BEFORE enabling interception
-        page.add_handler(cdp.page.FileChooserOpened, _on_file_chooser)
-        _log("upload: registered FileChooserOpened handler", verbose)
-
-        # Enable file chooser interception
-        await page.send(cdp.page.set_intercept_file_chooser_dialog(enabled=True))
-        _log("upload: file chooser interception enabled", verbose)
-
-        # ── Trigger file chooser via ⌘U shortcut ─────────────────────
-        # ⌘U is the keyboard shortcut for "Add photos & files" in ChatGPT.
-        # Using the shortcut is more reliable than navigating the '+' menu,
-        # which has container elements that make click targeting fragile.
-        _log("upload: sending ⌘U to trigger file picker", verbose)
-        await page.send(cdp.input_.dispatch_key_event(
-            type_="keyDown", key="u", code="KeyU",
-            windows_virtual_key_code=85, native_virtual_key_code=85,
-            modifiers=4,  # 4 = Meta (Cmd on Mac)
-        ))
-        await page.sleep(0.1)
-        await page.send(cdp.input_.dispatch_key_event(
-            type_="keyUp", key="u", code="KeyU",
-            windows_virtual_key_code=85, native_virtual_key_code=85,
-            modifiers=4,
-        ))
-
-        # ── Step 3: Wait for file chooser event handler to fire ───────
         try:
-            handled = await asyncio.wait_for(chooser_future, timeout=10.0)
-        except asyncio.TimeoutError:
-            _log("upload: file chooser event timed out after 10s", verbose)
-            handled = False
+            raw_page.add_handler(_cdp.page.FileChooserOpened, _on_file_chooser)
+            await raw_page.send(_cdp.page.set_intercept_file_chooser_dialog(enabled=True))
+            _log("upload: sending ⌘U to trigger file picker", verbose)
+            await engine.key_combo("u", meta=True)
 
-        if not handled:
+            try:
+                handled = await asyncio.wait_for(chooser_future, timeout=10.0)
+            except asyncio.TimeoutError:
+                _log("upload: file chooser event timed out after 10s", verbose)
+                handled = False
+
+            if not handled:
+                return {
+                    "success": False,
+                    "error": "File chooser was not triggered or could not be handled",
+                }
+
+            _log("upload: waiting for file processing...", verbose)
+            await engine.sleep(3)
+
+            attached = await engine.run_js('''(() => {
+                const indicators = document.querySelectorAll(
+                    '[data-testid*="attachment"], [class*="attachment"], ' +
+                    '[class*="file-chip"], [class*="uploaded"], ' +
+                    'img[alt*="Uploaded"], form [class*="thumbnail"], ' +
+                    'form [class*="preview"]'
+                );
+                return {count: indicators.length};
+            })()''')
+
+            _log(f"upload: attachment indicators: {attached}", verbose)
             return {
-                "success": False,
-                "error": "File chooser was not triggered or could not be handled",
+                "success": True,
+                "attached": len(abs_paths),
+                "files": abs_paths,
+                "indicators": attached,
             }
 
-        # ── Step 4: Wait for ChatGPT to process attachments ──────────
-        _log("upload: waiting for file processing...", verbose)
-        await page.sleep(3)
+        except Exception as e:
+            _log(f"upload: error — {e}", verbose)
+            return {"success": False, "error": f"File upload failed: {e}"}
+        finally:
+            try:
+                await raw_page.send(
+                    _cdp.page.set_intercept_file_chooser_dialog(enabled=False)
+                )
+            except Exception:
+                pass
+            try:
+                handlers = raw_page.handlers.get(_cdp.page.FileChooserOpened, [])
+                if _on_file_chooser in handlers:
+                    handlers.remove(_on_file_chooser)
+            except Exception:
+                pass
 
-        # Verify attachment indicators in composer
-        attached = await _cdp_eval(page, '''(() => {
-            const indicators = document.querySelectorAll(
-                '[data-testid*="attachment"], [class*="attachment"], ' +
-                '[class*="file-chip"], [class*="uploaded"], ' +
-                'img[alt*="Uploaded"], form [class*="thumbnail"], ' +
-                'form [class*="preview"]'
-            );
-            return {count: indicators.length};
-        })()''')
-
-        _log(f"upload: attachment indicators: {attached}", verbose)
-
-        return {
-            "success": True,
-            "attached": len(abs_paths),
-            "files": abs_paths,
-            "indicators": attached,
-        }
-
-    except Exception as e:
-        _log(f"upload: error — {e}", verbose)
-        return {
-            "success": False,
-            "error": f"File upload failed: {e}",
-        }
-    finally:
-        # Always clean up: disable interception and remove handler
+    else:
+        # ── Playwright path (camoufox): use set_input_files ──────────
         try:
-            await page.send(
-                cdp.page.set_intercept_file_chooser_dialog(enabled=False)
-            )
-        except Exception:
-            pass
-        # Remove the handler to avoid leaking
-        try:
-            handlers = page.handlers.get(cdp.page.FileChooserOpened, [])
-            if _on_file_chooser in handlers:
-                handlers.remove(_on_file_chooser)
-        except Exception:
-            pass
+            _log("upload: using Playwright set_input_files", verbose)
+            handled = await engine.set_input_files('input[type="file"]', abs_paths)
+            if not handled:
+                # Fallback: trigger file chooser via ⌘U then set files
+                await engine.key_combo("u", meta=True)
+                await engine.sleep(1)
+                handled = await engine.set_input_files('input[type="file"]', abs_paths)
+
+            if not handled:
+                return {
+                    "success": False,
+                    "error": "Could not set files via Playwright",
+                }
+
+            await engine.sleep(3)
+            attached = await engine.run_js('''(() => {
+                const indicators = document.querySelectorAll(
+                    '[data-testid*="attachment"], [class*="attachment"], ' +
+                    '[class*="file-chip"], [class*="uploaded"]'
+                );
+                return {count: indicators.length};
+            })()''')
+
+            _log(f"upload: attachment indicators: {attached}", verbose)
+            return {
+                "success": True,
+                "attached": len(abs_paths),
+                "files": abs_paths,
+                "indicators": attached,
+            }
+
+        except Exception as e:
+            _log(f"upload: error — {e}", verbose)
+            return {"success": False, "error": f"File upload failed: {e}"}
 
 
-async def wait_for_response(page, timeout: int, poll_interval: float = POLL_INTERVAL) -> tuple[str, int]:
+async def wait_for_response(engine: BrowserEngine, timeout: int, poll_interval: float = POLL_INTERVAL) -> tuple[str, int]:
     """
     Wait for ChatGPT to complete its response.
     Handles reasoning models that can think for extended periods.
@@ -691,7 +613,7 @@ async def wait_for_response(page, timeout: int, poll_interval: float = POLL_INTE
 
     while time.time() - start_time < timeout:
         try:
-            page_text = await _cdp_eval(page, 'document.body.innerText') or ""
+            page_text = await engine.run_js('document.body.innerText') or ""
 
             if "rate limit" in page_text.lower() or "too many requests" in page_text.lower():
                 return "", -1
@@ -699,14 +621,14 @@ async def wait_for_response(page, timeout: int, poll_interval: float = POLL_INTE
             if "something went wrong" in page_text.lower():
                 return "", -2
 
-            is_generating = await _cdp_eval(page, '''(() => {
+            is_generating = await engine.run_js('''(() => {
                 const stopBtn = document.querySelector('[data-testid="stop-button"]') ||
                                document.querySelector('[aria-label="Stop generating"]') ||
                                document.querySelector('button.stop-button');
                 return stopBtn !== null;
             })()''')
 
-            thinking_match = await _cdp_eval(page, '''(() => {
+            thinking_match = await engine.run_js('''(() => {
                 const text = document.body.innerText;
                 const match = text.match(/(?:Thought|Thinking|Reasoned?)\\s+(?:for\\s+)?(\\d+)\\s*(?:second|sec|s)/i);
                 if (match) return parseInt(match[1], 10);
@@ -718,7 +640,7 @@ async def wait_for_response(page, timeout: int, poll_interval: float = POLL_INTE
                 thinking_time = thinking_match
                 response_started = True
 
-            full_page_text = await _cdp_eval(page, 'document.body.innerText') or ""
+            full_page_text = await engine.run_js('document.body.innerText') or ""
             response_text = ""
 
             # UI chrome lines to filter out (compiled once outside loop would be
@@ -741,7 +663,7 @@ async def wait_for_response(page, timeout: int, poll_interval: float = POLL_INTE
 
             # Method 2: Markdown / prose areas (capture full text, not just first line)
             if not response_text:
-                prose_text = await _cdp_eval(page, '''(() => {
+                prose_text = await engine.run_js('''(() => {
                     const els = document.querySelectorAll('.markdown, .prose, [class*="markdown"]');
                     if (els.length > 0) return els[els.length - 1].innerText.trim();
                     return '';
@@ -769,8 +691,8 @@ async def wait_for_response(page, timeout: int, poll_interval: float = POLL_INTE
                     last_text = response_text
 
             if response_text and not is_generating:
-                await page.sleep(1)
-                final_text = await _cdp_eval(page, '''(() => {
+                await engine.sleep(1)
+                final_text = await engine.run_js('''(() => {
                     const selectors = [
                         '[data-message-author-role="assistant"]',
                         '.agent-turn',
@@ -809,7 +731,7 @@ async def wait_for_response(page, timeout: int, poll_interval: float = POLL_INTE
         except Exception:
             pass
 
-        await page.sleep(poll_interval)
+        await engine.sleep(poll_interval)
 
     return last_text.strip() if last_text else "", thinking_time
 
@@ -818,6 +740,7 @@ async def wait_for_response(page, timeout: int, poll_interval: float = POLL_INTE
 
 async def prompt_chatgpt(
     prompt: str,
+    engine_name: str = "nodriver",
     headless: bool = None,
     timeout: int = None,
     screenshot: str = None,
@@ -852,12 +775,12 @@ async def prompt_chatgpt(
         session_id=session_id,
         screenshot=screenshot,
         verbose=verbose,
+        engine_name=engine_name,
     )
     if not setup["success"]:
         return setup
 
-    browser = setup["browser"]
-    page = setup["page"]
+    engine = setup["engine"]
     injected = setup["injected"]
 
     try:
@@ -870,8 +793,8 @@ async def prompt_chatgpt(
             idx_match = re.match(r'^idx-(\d+)$', continue_chat_id)
             if idx_match or not re.match(r'^[a-zA-Z0-9-]{20,}$', continue_chat_id):
                 # Need to look up from sidebar
-                await page.sleep(2)
-                chat_links = await _cdp_eval(page, '''(() => {
+                await engine.sleep(2)
+                chat_links = await engine.run_js('''(() => {
                     const results = [];
                     const links = document.querySelectorAll('a[href*="/c/"]');
                     for (const a of links) {
@@ -911,16 +834,16 @@ async def prompt_chatgpt(
 
             # Navigate to the existing chat
             chat_url = CHATGPT_CHAT_URL.format(chat_id=resolved_id)
-            page = await browser.get(chat_url)
-            await page.sleep(4)
+            await engine.goto(chat_url)
+            await engine.sleep(4)
 
         # Handle --project: navigate to project context
         elif project:
             _log(f"project: resolving project '{project}'", verbose)
-            await page.sleep(2)
+            await engine.sleep(2)
 
             # Find the Projects button and expand if needed
-            projects_btn = await _cdp_eval(page, '''(() => {
+            projects_btn = await engine.run_js('''(() => {
                 const buttons = document.querySelectorAll('button');
                 for (const btn of buttons) {
                     const text = (btn.innerText || '').trim();
@@ -935,16 +858,16 @@ async def prompt_chatgpt(
             })()''')
 
             # Expand Projects section if no project links visible
-            project_links_count = await _cdp_eval(page, '''(() => {
+            project_links_count = await engine.run_js('''(() => {
                 return document.querySelectorAll('a[href*="/g/g-p-"]').length;
             })()''')
 
             if projects_btn and not project_links_count:
-                await _cdp_click(page, projects_btn['x'], projects_btn['y'])
-                await page.sleep(1.5)
+                await engine.mouse_click(projects_btn['x'], projects_btn['y'])
+                await engine.sleep(1.5)
 
             # Find all project links
-            project_links = await _cdp_eval(page, '''(() => {
+            project_links = await engine.run_js('''(() => {
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/g/g-p-"]');
                 for (const a of links) {
@@ -977,16 +900,16 @@ async def prompt_chatgpt(
 
             _log(f"project: navigating to '{matched['name']}' ({matched['id']})", verbose)
             project_url = f"https://chatgpt.com{matched['url']}"
-            page = await browser.get(project_url)
-            await page.sleep(4)
+            await engine.goto(project_url)
+            await engine.sleep(4)
 
         # Handle --new-chat: force fresh conversation
         elif new_chat:
-            await ensure_new_chat(page, verbose=verbose)
+            await ensure_new_chat(engine, verbose=verbose)
 
         # Select model if needed (only for new chats, not continued/project ones)
         if selected_model != "auto" and not continue_chat_id and not project:
-            model_selected = await select_model(page, selected_model, verbose=verbose)
+            model_selected = await select_model(engine, selected_model, verbose=verbose)
             if not model_selected:
                 _log("model selection failed, continuing with default", verbose)
 
@@ -995,7 +918,7 @@ async def prompt_chatgpt(
             _log("temp_chat: enabling temporary chat mode", verbose)
             # ChatGPT has a "Temporary chat" toggle accessible via the model selector area
             # or via a switch/toggle in the interface. Try multiple strategies.
-            temp_toggled = await _cdp_eval(page, '''(() => {
+            temp_toggled = await engine.run_js('''(() => {
                 // Strategy 1: Look for a toggle/switch with temp-related attributes
                 const toggles = document.querySelectorAll(
                     '[data-testid*="temp"], [data-testid*="temporary"], ' +
@@ -1023,24 +946,24 @@ async def prompt_chatgpt(
 
             if temp_toggled:
                 _log(f"temp_chat: found toggle via {temp_toggled['strategy']}, clicking", verbose)
-                await _cdp_click(page, temp_toggled['x'], temp_toggled['y'])
-                await page.sleep(0.5)
+                await engine.mouse_click(temp_toggled['x'], temp_toggled['y'])
+                await engine.sleep(0.5)
             else:
                 _log("temp_chat: toggle not found, trying URL parameter", verbose)
                 # Fallback: navigate with temporary=true parameter
-                current_url = await _cdp_eval(page, 'window.location.href')
+                current_url = await engine.run_js('window.location.href')
                 if current_url and '?' in current_url:
-                    page = await browser.get(f"{current_url}&temporary-chat=true")
+                    await engine.goto(f"{current_url}&temporary-chat=true")
                 else:
-                    page = await browser.get(f"{CHATGPT_URL}?temporary-chat=true")
-                await page.sleep(3)
+                    await engine.goto(f"{CHATGPT_URL}?temporary-chat=true")
+                await engine.sleep(3)
 
         # Handle --search/--no-search: toggle web search
         if web_search is not None:
             action_label = "enabling" if web_search else "disabling"
             _log(f"web_search: {action_label} web search", verbose)
 
-            search_toggle = await _cdp_eval(page, '''(() => {
+            search_toggle = await engine.run_js('''(() => {
                 // Look for search toggle near the input area
                 const toggles = document.querySelectorAll(
                     '[data-testid*="search"], [data-testid*="web-search"], ' +
@@ -1082,8 +1005,8 @@ async def prompt_chatgpt(
                               (not web_search and search_toggle['isEnabled'])
                 if needs_click:
                     _log(f"web_search: toggling search (currently {'on' if search_toggle['isEnabled'] else 'off'})", verbose)
-                    await _cdp_click(page, search_toggle['x'], search_toggle['y'])
-                    await page.sleep(0.5)
+                    await engine.mouse_click(search_toggle['x'], search_toggle['y'])
+                    await engine.sleep(0.5)
                 else:
                     _log(f"web_search: already in desired state", verbose)
             else:
@@ -1091,10 +1014,10 @@ async def prompt_chatgpt(
 
         # Handle --file / --image: upload attachments before sending prompt
         if files:
-            upload_result = await _upload_attachments(page, files, verbose=verbose)
+            upload_result = await _upload_attachments(engine, files, verbose=verbose)
             if not upload_result["success"]:
                 if screenshot:
-                    await page.save_screenshot(screenshot)
+                    await engine.screenshot(screenshot)
                 return {
                     "success": False,
                     "error": upload_result.get("error", "File upload failed"),
@@ -1103,21 +1026,21 @@ async def prompt_chatgpt(
             _log(f"upload: {upload_result['attached']} file(s) attached", verbose)
 
         # Input the prompt
-        if not await input_prompt(page, prompt):
+        if not await input_prompt(engine, prompt):
             if screenshot:
-                await page.save_screenshot(screenshot)
+                await engine.screenshot(screenshot)
             return {
                 "success": False,
                 "error": "Could not find ChatGPT input field",
                 "screenshot": screenshot
             }
 
-        await page.sleep(0.5)
+        await engine.sleep(0.5)
 
         # Send the prompt
-        if not await send_prompt(page):
+        if not await send_prompt(engine):
             if screenshot:
-                await page.save_screenshot(screenshot)
+                await engine.screenshot(screenshot)
             return {
                 "success": False,
                 "error": "Could not find send button",
@@ -1126,11 +1049,11 @@ async def prompt_chatgpt(
 
         # Wait for response
         start_time = time.time()
-        response_text, thinking_time = await wait_for_response(page, timeout)
+        response_text, thinking_time = await wait_for_response(engine, timeout)
         total_time = int(time.time() - start_time)
 
         if screenshot:
-            await page.save_screenshot(screenshot)
+            await engine.screenshot(screenshot)
 
         if thinking_time == -1:
             return {
@@ -1182,11 +1105,12 @@ async def prompt_chatgpt(
         }
 
     finally:
-        if browser:
-            browser.stop()
+        if engine:
+            await engine.stop()
 
 
 async def list_chatgpt_chats(
+    engine_name: str = "nodriver",
     headless: bool | None = None,
     show_browser: bool = False,
     limit: int = 50,
@@ -1205,20 +1129,20 @@ async def list_chatgpt_chats(
         headless=headless,
         show_browser=show_browser,
         verbose=verbose,
+        engine_name=engine_name,
     )
     if not setup["success"]:
         return setup
 
-    browser = setup["browser"]
-    page = setup["page"]
+    engine = setup["engine"]
 
     try:
         # Wait for sidebar to render
-        await page.sleep(3)
+        await engine.sleep(3)
 
         # Strategy 1: Extract chat links directly from DOM (most reliable)
         # ChatGPT sidebar uses <a href="/c/{conversation_id}"> elements
-        chat_links = await _cdp_eval(page, '''(() => {
+        chat_links = await engine.run_js('''(() => {
             const results = [];
             const links = document.querySelectorAll('a[href*="/c/"]');
             for (const a of links) {
@@ -1276,7 +1200,7 @@ async def list_chatgpt_chats(
         # Strategy 2: Fallback to innerText parsing if DOM extraction failed
         if not chats:
             _log("list_chats: DOM extraction failed, trying innerText parsing", verbose)
-            page_text = await _cdp_eval(page, 'document.body.innerText') or ""
+            page_text = await engine.run_js('document.body.innerText') or ""
 
             date_headers = {
                 'Today', 'Yesterday', 'Previous 7 Days', 'Previous 30 Days',
@@ -1336,12 +1260,13 @@ async def list_chatgpt_chats(
         }
 
     finally:
-        if browser:
-            browser.stop()
+        if engine:
+            await engine.stop()
 
 
 async def get_chatgpt_chat(
     chat_id: str,
+    engine_name: str = "nodriver",
     headless: bool | None = None,
     show_browser: bool = False,
     timeout: int = 60,
@@ -1370,12 +1295,12 @@ async def get_chatgpt_chat(
         headless=headless,
         show_browser=show_browser,
         verbose=verbose,
+        engine_name=engine_name,
     )
     if not setup["success"]:
         return setup
 
-    browser = setup["browser"]
-    page = setup["page"]
+    engine = setup["engine"]
 
     try:
         _log(f"get_chat: id={chat_id} is_index={is_index}", verbose)
@@ -1384,10 +1309,10 @@ async def get_chatgpt_chat(
 
         if is_index:
             # Need to find the chat by index from the sidebar
-            await page.sleep(3)
+            await engine.sleep(3)
 
             # Get ordered list of chat links
-            chat_links = await _cdp_eval(page, '''(() => {
+            chat_links = await engine.run_js('''(() => {
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/c/"]');
                 for (const a of links) {
@@ -1414,9 +1339,9 @@ async def get_chatgpt_chat(
 
         elif not re.match(r'^[a-zA-Z0-9-]{20,}$', chat_id):
             # Looks like a title substring, not a conversation ID
-            await page.sleep(3)
+            await engine.sleep(3)
 
-            chat_links = await _cdp_eval(page, '''(() => {
+            chat_links = await engine.run_js('''(() => {
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/c/"]');
                 for (const a of links) {
@@ -1451,8 +1376,8 @@ async def get_chatgpt_chat(
         # Navigate to the chat
         chat_url = CHATGPT_CHAT_URL.format(chat_id=chat_id)
         _log(f"get_chat: navigating to {chat_url}", verbose)
-        page = await browser.get(chat_url)
-        await page.sleep(5)
+        await engine.goto(chat_url)
+        await engine.sleep(5)
 
         # Extract conversation turns using data-message-author-role attributes
         start_time = time.time()
@@ -1461,7 +1386,7 @@ async def get_chatgpt_chat(
         final_messages = None
 
         while time.time() - start_time < timeout:
-            messages = await _cdp_eval(page, '''(() => {
+            messages = await engine.run_js('''(() => {
                 const results = [];
 
                 // Strategy 1: Use data-message-author-role (most reliable)
@@ -1524,7 +1449,7 @@ async def get_chatgpt_chat(
             else:
                 stable_count = 0
 
-            await page.sleep(1)
+            await engine.sleep(1)
 
         if not final_messages:
             final_messages = last_messages or []
@@ -1575,12 +1500,13 @@ async def get_chatgpt_chat(
         }
 
     finally:
-        if browser:
-            browser.stop()
+        if engine:
+            await engine.stop()
 
 
 async def search_chatgpt_chats(
     query: str,
+    engine_name: str = "nodriver",
     headless: bool | None = None,
     show_browser: bool = False,
     limit: int = 20,
@@ -1602,33 +1528,23 @@ async def search_chatgpt_chats(
         headless=headless,
         show_browser=show_browser,
         verbose=verbose,
+        engine_name=engine_name,
     )
     if not setup["success"]:
         return setup
 
-    browser = setup["browser"]
-    page = setup["page"]
+    engine = setup["engine"]
 
     try:
-        await page.sleep(2)
+        await engine.sleep(2)
 
         # Open search dialog via Cmd+K (Meta key on Mac)
         _log("search: sending Cmd+K to open search dialog", verbose)
-        await page.send(cdp.input_.dispatch_key_event(
-            type_="keyDown", key="k", code="KeyK",
-            windows_virtual_key_code=75, native_virtual_key_code=75,
-            modifiers=4,  # 4 = Meta (Cmd on Mac)
-        ))
-        await page.sleep(0.1)
-        await page.send(cdp.input_.dispatch_key_event(
-            type_="keyUp", key="k", code="KeyK",
-            windows_virtual_key_code=75, native_virtual_key_code=75,
-            modifiers=4,
-        ))
-        await page.sleep(2)
+        await engine.key_combo("k", meta=True)
+        await engine.sleep(2)
 
         # Find the search input
-        search_input = await _cdp_eval(page, '''(() => {
+        search_input = await engine.run_js('''(() => {
             const inputs = document.querySelectorAll('input');
             for (const inp of inputs) {
                 const ph = (inp.getAttribute('placeholder') || '').toLowerCase();
@@ -1650,24 +1566,19 @@ async def search_chatgpt_chats(
         _log(f"search: found input with placeholder={search_input['placeholder']!r}", verbose)
 
         # Click the input to focus it
-        await _cdp_click(page, search_input['x'], search_input['y'])
-        await page.sleep(0.5)
+        await engine.mouse_click(search_input['x'], search_input['y'])
+        await engine.sleep(0.5)
 
         # Type the query via CDP key events
         for char in query:
-            await page.send(cdp.input_.dispatch_key_event(
-                type_="keyDown", key=char, text=char,
-            ))
-            await page.sleep(0.03)
-            await page.send(cdp.input_.dispatch_key_event(
-                type_="keyUp", key=char,
-            ))
+            await engine.key_press(char)
+            await engine.sleep(0.03)
 
         _log(f"search: typed query '{query}', waiting for results", verbose)
-        await page.sleep(3)  # Wait for search results to load
+        await engine.sleep(3)  # Wait for search results to load
 
         # Extract search results from the dialog
-        results = await _cdp_eval(page, '''(() => {
+        results = await engine.run_js('''(() => {
             const results = [];
 
             // Look for chat links inside the search dialog
@@ -1707,10 +1618,7 @@ async def search_chatgpt_chats(
         _log(f"search: found {len(results or [])} results", verbose)
 
         # Close the search dialog
-        await page.send(cdp.input_.dispatch_key_event(
-            type_="keyDown", key="Escape", code="Escape",
-            windows_virtual_key_code=27, native_virtual_key_code=27,
-        ))
+        await engine.key_press("Escape")
 
         chats = []
         for r in (results or [])[:limit]:
@@ -1731,11 +1639,12 @@ async def search_chatgpt_chats(
         return {"success": False, "error": str(e)}
 
     finally:
-        if browser:
-            browser.stop()
+        if engine:
+            await engine.stop()
 
 
 async def list_chatgpt_projects(
+    engine_name: str = "nodriver",
     headless: bool | None = None,
     show_browser: bool = False,
     verbose: bool = False,
@@ -1753,18 +1662,18 @@ async def list_chatgpt_projects(
         headless=headless,
         show_browser=show_browser,
         verbose=verbose,
+        engine_name=engine_name,
     )
     if not setup["success"]:
         return setup
 
-    browser = setup["browser"]
-    page = setup["page"]
+    engine = setup["engine"]
 
     try:
-        await page.sleep(3)
+        await engine.sleep(3)
 
         # Ensure the Projects section is expanded by clicking the button
-        projects_btn = await _cdp_eval(page, '''(() => {
+        projects_btn = await engine.run_js('''(() => {
             const buttons = document.querySelectorAll('button');
             for (const btn of buttons) {
                 const text = (btn.innerText || '').trim();
@@ -1782,18 +1691,18 @@ async def list_chatgpt_projects(
             _log(f"list_projects: clicking Projects button at ({projects_btn['x']:.0f},{projects_btn['y']:.0f})", verbose)
             # Click to expand (if collapsed) — clicking when already expanded
             # may collapse it, so check first
-            project_links_before = await _cdp_eval(page, '''(() => {
+            project_links_before = await engine.run_js('''(() => {
                 return document.querySelectorAll('a[href*="/g/g-p-"]').length;
             })()''')
 
             if not project_links_before:
-                await _cdp_click(page, projects_btn['x'], projects_btn['y'])
-                await page.sleep(1.5)
+                await engine.mouse_click(projects_btn['x'], projects_btn['y'])
+                await engine.sleep(1.5)
         else:
             _log("list_projects: Projects button not found", verbose)
 
         # Extract project links
-        projects = await _cdp_eval(page, '''(() => {
+        projects = await engine.run_js('''(() => {
             const results = [];
             const links = document.querySelectorAll('a[href*="/g/g-p-"]');
             for (const a of links) {
@@ -1827,8 +1736,8 @@ async def list_chatgpt_projects(
         return {"success": False, "error": str(e)}
 
     finally:
-        if browser:
-            browser.stop()
+        if engine:
+            await engine.stop()
 
 
 def extract_code_blocks(text: str) -> list[str]:
@@ -1891,6 +1800,7 @@ def format_chat_export(result: dict, fmt: str) -> str:
 async def delete_or_archive_chat(
     chat_id: str,
     action: str,
+    engine_name: str = "nodriver",
     headless: bool | None = None,
     show_browser: bool = False,
     verbose: bool = False,
@@ -1908,21 +1818,21 @@ async def delete_or_archive_chat(
         headless=headless,
         show_browser=show_browser,
         verbose=verbose,
+        engine_name=engine_name,
     )
     if not setup["success"]:
         return setup
 
-    browser = setup["browser"]
-    page = setup["page"]
+    engine = setup["engine"]
 
     try:
-        await page.sleep(3)
+        await engine.sleep(3)
 
         # Resolve the chat ID to find the sidebar link
         resolved_id = chat_id
         idx_match = re.match(r'^idx-(\d+)$', chat_id)
         if idx_match or not re.match(r'^[a-zA-Z0-9-]{20,}$', chat_id):
-            chat_links = await _cdp_eval(page, '''(() => {
+            chat_links = await engine.run_js('''(() => {
                 const results = [];
                 const links = document.querySelectorAll('a[href*="/c/"]');
                 for (const a of links) {
@@ -1953,7 +1863,7 @@ async def delete_or_archive_chat(
             resolved_id = target['id']
         else:
             # Have a UUID — find it in the sidebar
-            target_info = await _cdp_eval(page, f'''(() => {{
+            target_info = await engine.run_js(f'''(() => {{
                 const links = document.querySelectorAll('a[href*="/c/{resolved_id}"]');
                 for (const a of links) {{
                     const r = a.getBoundingClientRect();
@@ -1970,13 +1880,11 @@ async def delete_or_archive_chat(
         _log(f"{action}: targeting chat '{target['title']}' ({resolved_id})", verbose)
 
         # Hover over the chat link to reveal the options button
-        await page.send(cdp.input_.dispatch_mouse_event(
-            type_="mouseMoved", x=target['x'], y=target['y'],
-        ))
-        await page.sleep(0.5)
+        await engine.mouse_move(target['x'], target['y'])
+        await engine.sleep(0.5)
 
         # Look for the options button (three dots) that appears on hover
-        options_btn = await _cdp_eval(page, f'''(() => {{
+        options_btn = await engine.run_js(f'''(() => {{
             // Look for options button near the hovered chat
             const btns = document.querySelectorAll('button[data-testid*="history-item"][data-testid*="options"]');
             for (const btn of btns) {{
@@ -2000,12 +1908,12 @@ async def delete_or_archive_chat(
             return {"success": False, "error": f"Could not find options button for chat '{target['title']}'"}
 
         _log(f"{action}: clicking options button at ({options_btn['x']:.0f},{options_btn['y']:.0f})", verbose)
-        await _cdp_click(page, options_btn['x'], options_btn['y'])
-        await page.sleep(1)
+        await engine.mouse_click(options_btn['x'], options_btn['y'])
+        await engine.sleep(1)
 
         # Find the delete/archive menu item
         action_label = "Delete" if action == "delete" else "Archive"
-        menu_item = await _cdp_eval(page, f'''(() => {{
+        menu_item = await engine.run_js(f'''(() => {{
             const items = document.querySelectorAll('[role="menuitem"], [role="option"], button');
             for (const item of items) {{
                 const text = (item.innerText || '').trim();
@@ -2023,12 +1931,12 @@ async def delete_or_archive_chat(
             return {"success": False, "error": f"Could not find '{action_label}' in menu"}
 
         _log(f"{action}: clicking '{menu_item['text']}' menu item", verbose)
-        await _cdp_click(page, menu_item['x'], menu_item['y'])
-        await page.sleep(1)
+        await engine.mouse_click(menu_item['x'], menu_item['y'])
+        await engine.sleep(1)
 
         # Handle confirmation dialog (delete has one, archive may not)
         if action == "delete":
-            confirm_btn = await _cdp_eval(page, '''(() => {
+            confirm_btn = await engine.run_js('''(() => {
                 const btns = document.querySelectorAll('button');
                 for (const btn of btns) {
                     const text = (btn.innerText || '').trim().toLowerCase();
@@ -2044,8 +1952,8 @@ async def delete_or_archive_chat(
 
             if confirm_btn:
                 _log(f"{action}: confirming deletion", verbose)
-                await _cdp_click(page, confirm_btn['x'], confirm_btn['y'])
-                await page.sleep(1)
+                await engine.mouse_click(confirm_btn['x'], confirm_btn['y'])
+                await engine.sleep(1)
 
         return {
             "success": True,
@@ -2058,8 +1966,8 @@ async def delete_or_archive_chat(
         return {"success": False, "error": str(e)}
 
     finally:
-        if browser:
-            browser.stop()
+        if engine:
+            await engine.stop()
 
 
 # ── CLI ───────────────────────────────────────────────────────────────
@@ -2207,6 +2115,7 @@ Output:
                         help="Execution mode: 'api' (fast HTTP, no browser), "
                              "'browser' (stealth browser), 'auto' (try API, "
                              "fall back to browser). Default: auto")
+    add_engine_argument(parser)
 
     args = parser.parse_args()
 
@@ -2238,6 +2147,7 @@ Output:
     # ── List chats mode ───────────────────────────────────────────
     if args.list_chats:
         result = asyncio.run(list_chatgpt_chats(
+            engine_name=args.engine,
             show_browser=args.show_browser,
             limit=args.limit,
             verbose=args.verbose,
@@ -2270,6 +2180,7 @@ Output:
     if args.search_chats:
         result = asyncio.run(search_chatgpt_chats(
             query=args.search_chats,
+            engine_name=args.engine,
             show_browser=args.show_browser,
             limit=args.limit,
             verbose=args.verbose,
@@ -2298,6 +2209,7 @@ Output:
     # ── List projects mode ─────────────────────────────────────────
     if args.list_projects:
         result = asyncio.run(list_chatgpt_projects(
+            engine_name=args.engine,
             show_browser=args.show_browser,
             verbose=args.verbose,
         ))
@@ -2326,6 +2238,7 @@ Output:
         timeout = args.timeout or 60
         result = asyncio.run(get_chatgpt_chat(
             chat_id=args.export,
+            engine_name=args.engine,
             show_browser=args.show_browser,
             timeout=timeout,
             verbose=args.verbose,
@@ -2347,6 +2260,7 @@ Output:
         result = asyncio.run(delete_or_archive_chat(
             chat_id=args.delete_chat,
             action="delete",
+            engine_name=args.engine,
             show_browser=args.show_browser,
             verbose=args.verbose,
         ))
@@ -2366,6 +2280,7 @@ Output:
         result = asyncio.run(delete_or_archive_chat(
             chat_id=args.archive_chat,
             action="archive",
+            engine_name=args.engine,
             show_browser=args.show_browser,
             verbose=args.verbose,
         ))
@@ -2385,6 +2300,7 @@ Output:
         timeout = args.timeout or 60
         result = asyncio.run(get_chatgpt_chat(
             chat_id=args.get_chat,
+            engine_name=args.engine,
             show_browser=args.show_browser,
             timeout=timeout,
             verbose=args.verbose,
@@ -2457,6 +2373,7 @@ Output:
             _log(f"API mode failed: {result.get('error')}. Falling back to browser.", args.verbose)
             result = asyncio.run(prompt_chatgpt(
                 prompt=args.prompt,
+                engine_name=args.engine,
                 headless=args.headless,
                 timeout=args.timeout,
                 screenshot=args.screenshot,
@@ -2472,6 +2389,7 @@ Output:
 
         result = asyncio.run(prompt_chatgpt(
             prompt=args.prompt,
+            engine_name=args.engine,
             headless=args.headless,
             timeout=args.timeout,
             screenshot=args.screenshot,
