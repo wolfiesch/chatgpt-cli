@@ -1,0 +1,4 @@
+nodriver
+python-dotenv
+pycryptodome
+httpx>=0.27

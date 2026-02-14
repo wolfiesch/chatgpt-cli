@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+.venv.old/
+
+# Runtime data
+data/
+logs/
+scripts/logs/
+
+# Environment
+.env
+
+# OS
+.DS_Store
